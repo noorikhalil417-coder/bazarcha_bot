@@ -1,0 +1,27 @@
+[Unit]
+Description=Bazaarche Telegram Marketplace Bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=bazaarche
+Group=bazaarche
+WorkingDirectory=/opt/bazaarche
+EnvironmentFile=/etc/bazaarche/bot.env
+Environment=PYTHONUNBUFFERED=1
+StateDirectory=bazaarche
+StateDirectoryMode=0700
+UMask=0077
+ExecStart=/opt/bazaarche/.venv/bin/python /opt/bazaarche/bot.py
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=30
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/bazaarche
+
+[Install]
+WantedBy=multi-user.target
