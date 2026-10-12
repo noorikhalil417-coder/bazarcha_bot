@@ -20,7 +20,7 @@ from telegram.error import TelegramError
 from telegram.ext import CallbackQueryHandler, CommandHandler, ContextTypes
 
 from services.backup import create_backup, restore_backup
-from services.marketplace import Marketplace, MarketplaceError
+from services.marketplace import Marketplace, MarketplaceError, format_public_ad
 
 logger = logging.getLogger(__name__)
 
@@ -28,7 +28,8 @@ SECTIONS = (
     ("stats", "آمار عمومی"), ("ads", "بررسی آگهی‌ها"), ("users", "مدیریت کاربران"),
     ("reports", "گزارش تخلفات"), ("categories", "دسته‌بندی‌ها"), ("rules", "قوانین گروه"),
     ("antispam", "تنظیمات ضداسپم"), ("publication", "تنظیمات نشر آگهی"),
-    ("featured", "آگهی‌های ویژه"), ("reputation", "امتیاز کاربران"),
+    ("group", "تنظیمات گروه"), ("group_review", "پیام‌های مشکوک"),
+    ("history", "سابقهٔ مدیریت"), ("featured", "آگهی‌های ویژه"), ("reputation", "امتیاز کاربران"),
     ("backup", "پشتیبان‌گیری"), ("health", "وضعیت ربات"), ("guide", "راهنمای مدیر"),
 )
 
@@ -55,6 +56,44 @@ async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 
 def _dashboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([[InlineKeyboardButton(label, callback_data=f"admin:{key}") for key, label in SECTIONS[index:index + 2]] for index in range(0, len(SECTIONS), 2)])
+
+
+def _group_message_url(chat_id: int, message_id: int, username: str | None = None) -> str | None:
+    if username and re.fullmatch(r"[A-Za-z0-9_]{5,32}", username):
+        return f"https://t.me/{username}/{message_id}"
+    raw_chat_id = str(chat_id)
+    if raw_chat_id.startswith("-100"):
+        return f"https://t.me/c/{raw_chat_id[4:]}/{message_id}"
+    return None
+
+
+async def notify_ad_reviewers(context: ContextTypes.DEFAULT_TYPE, ad_id: int) -> None:
+    market: Marketplace = _market(context)
+    ad = market.get_ad(ad_id)
+    if not ad:
+        logger.error("Cannot notify administrators about missing ad %s", ad_id)
+        return
+    markup = InlineKeyboardMarkup([
+        [InlineKeyboardButton("✅ تأیید و نشر", callback_data=f"ad:approve:{ad_id}")],
+        [InlineKeyboardButton("📝 درخواست تکمیل اطلاعات", callback_data=f"ad:request:{ad_id}")],
+        [InlineKeyboardButton("❌ رد آگهی", callback_data=f"ad:reject:{ad_id}")],
+    ])
+    text = f"آگهی شمارهٔ {ad_id} در انتظار بررسی مدیر است.\n\n{format_public_ad(ad)}"
+    photos = market.photos(ad_id)
+    for admin_id in context.application.bot_data["config"].admin_ids:
+        try:
+            if photos:
+                try:
+                    if len(photos) == 1:
+                        await context.bot.send_photo(admin_id, photos[0], caption=f"پیش‌نمایش آگهی #{ad_id}")
+                    else:
+                        media = [InputMediaPhoto(media=file_id, caption=f"پیش‌نمایش آگهی #{ad_id}" if index == 0 else None) for index, file_id in enumerate(photos)]
+                        await context.bot.send_media_group(admin_id, media)
+                except TelegramError as exc:
+                    logger.info("Review photo preview failed for ad %s: %s", ad_id, type(exc).__name__)
+            await context.bot.send_message(admin_id, text, reply_markup=markup)
+        except TelegramError as exc:
+            logger.info("Administrator review notification unavailable for ad %s: %s", ad_id, type(exc).__name__)
 
 
 async def _dashboard_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -91,6 +130,51 @@ async def _dashboard_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
         for report in rows:
             text += f"\nگزارش {report['report_id']}، آگهی {report['ad_id']}: {html.escape(report['title'])} ({html.escape(report['category'])})"
         if not rows: text += "\nگزارش بازی نیست."
+    elif section == "group":
+        config = context.application.bot_data["config"]
+        welcome = _market(context).get_setting("welcome_message", config.welcome_message)
+        text += (
+            f"\nخوش‌آمدگویی: {'روشن' if _market(context).get_setting('welcome_enabled', '1') == '1' else 'خاموش'}"
+            f"\nمتن فعلی: {html.escape(welcome)}"
+            "\nبرای تغییر متن از /welcome_set متن تازه استفاده کنید."
+            f"\nبررسی درخواست عضویت: {'با تأیید مدیر' if _market(context).get_setting('join_approval', '0') == '1' else 'خودکار'}"
+            "\nبرای صف درخواست، گروه باید لینک عضویتِ نیازمند تأیید داشته باشد و ربات اجازهٔ مدیریت پیوندها را بگیرد."
+        )
+    elif section == "group_review":
+        rows = _market(context).pending_group_reviews()
+        text += "\nپیام‌هایی که به‌صورت احتمالی شبیه آگهی‌اند؛ پیام اصلی دست‌نخورده می‌ماند:"
+        for row in rows:
+            try:
+                chat_id, message_id, *_ = row["reason"].split(":")
+                description = "احتمال آگهی" if row["action"] == "review_group_ad" else "پیام مشکوک"
+                text += f"\n{description} #{row['event_id']} | کاربر {row['user_id']} | پیام {message_id} در گروه {chat_id}"
+            except (ValueError, TypeError):
+                text += f"\nپیام #{row['event_id']} | پیوند پیام نامعتبر است."
+        if not rows:
+            text += "\nموردی در صف بررسی نیست."
+    elif section == "history":
+        with db.connect() as conn:
+            rows = conn.execute(
+                "SELECT admin_id,action,target,created_at FROM admin_actions ORDER BY action_id DESC LIMIT 15"
+            ).fetchall()
+        action_labels = {
+            "ad_approved": "تأیید آگهی",
+            "ad_rejected": "رد آگهی یا درخواست اصلاح",
+            "ad_archived": "بایگانی آگهی",
+            "group_message_review": "بررسی پیام گروه",
+            "join_request_approve": "پذیرش درخواست عضویت",
+            "join_request_reject": "رد درخواست عضویت",
+            "warn": "ثبت اخطار",
+            "mute": "خاموش‌کردن کاربر",
+            "unmute": "رفع خاموشی کاربر",
+            "ban": "مسدودکردن کاربر",
+            "unban": "رفع مسدودی کاربر",
+        }
+        text += "\n۱۵ اقدام مدیریتی تازه:"
+        for row in rows:
+            text += f"\n{html.escape(row['created_at'])} | مدیر {row['admin_id']} | {action_labels.get(row['action'], 'به‌روزرسانی تنظیم یا آگهی')} | {html.escape(row['target'])}"
+        if not rows:
+            text += "\nهنوز اقدامی ثبت نشده است."
     elif section == "users":
         with db.connect() as conn:
             rows = conn.execute("SELECT user_id,display_name,username,trusted FROM users ORDER BY last_seen_at DESC LIMIT 10").fetchall()
@@ -108,8 +192,7 @@ async def _dashboard_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
         text += f"\nعبارت‌های بسته: {html.escape(_market(context).get_setting('blocked_phrases', ''))}\nپیوندها: {'مجاز' if _market(context).get_setting('links_allowed', '1') == '1' else 'ممنوع'}\nبرای تغییر از دکمه استفاده کنید."
     elif section == "publication":
         config = context.application.bot_data["config"]
-        mode = _market(context).get_setting("review_mode", config.moderation_review_mode)
-        text += f"\nحالت بررسی: {'لازم' if mode == 'required' else 'خودکار'}\nمقصد نشر تنظیم‌شده: {'بلی' if config.publication_chat_id else 'نخیر؛ AD_PUBLICATION_CHAT_ID را تنظیم کنید'}\nآگهی‌های ویژه با فرمان ویژه فعال می‌شوند."
+        text += f"\nتأیید مدیر پیش از نشر: اجباری\nمقصد نشر تنظیم‌شده: {'بلی' if config.publication_chat_id else 'نخیر؛ AD_PUBLICATION_CHAT_ID را تنظیم کنید'}\nآگهی‌های ویژه با فرمان ویژه فعال می‌شوند."
     elif section == "featured":
         with db.connect() as conn:
             rows = conn.execute("SELECT ad_id,title,CASE WHEN featured_until > strftime('%Y-%m-%dT%H:%M:%fZ','now') THEN 1 ELSE 0 END AS featured FROM ads WHERE status='published' ORDER BY ad_id DESC LIMIT 10").fetchall()
@@ -145,7 +228,26 @@ async def _dashboard_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
     elif section == "antispam":
         buttons = [[InlineKeyboardButton("تغییر اجازهٔ پیوند", callback_data="setting:links_allowed"), InlineKeyboardButton("افزودن عبارت بسته", callback_data="setting:blocked_phrases")]]
     elif section == "publication":
-        buttons = [[InlineKeyboardButton("تغییر حالت بررسی", callback_data="setting:review_mode")]]
+        buttons = []
+    elif section == "group":
+        buttons = [[
+            InlineKeyboardButton("روشن/خاموش خوش‌آمدگویی", callback_data="setting:welcome_enabled"),
+            InlineKeyboardButton("تغییر تأیید عضویت", callback_data="setting:join_approval"),
+        ]]
+    elif section == "group_review":
+        buttons = []
+        for row in rows:
+            try:
+                chat_id_text, message_id_text, *username_parts = row["reason"].split(":")
+                chat_id, message_id = int(chat_id_text), int(message_id_text)
+                username = username_parts[0] if username_parts else None
+                row_buttons = [InlineKeyboardButton(f"✅ بررسی شد #{row['event_id']}", callback_data=f"group-review:{row['event_id']}")]
+                url = _group_message_url(chat_id, message_id, username)
+                if url:
+                    row_buttons.append(InlineKeyboardButton("بازکردن پیام", url=url))
+                buttons.append(row_buttons)
+            except (ValueError, TypeError):
+                continue
     elif section == "reputation":
         buttons = [[InlineKeyboardButton("تغییر نشر رتبه‌بندی", callback_data="setting:public_rankings")]]
     elif section == "featured":
@@ -167,21 +269,25 @@ async def _admin_action(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         action, raw_id = (parts[0].removeprefix("report-"), parts[1]) if parts[0].startswith("report-") else (parts[1], parts[2])
         raw_id = int(raw_id)
         market: Marketplace = _market(context)
-        if action in {"approve", "reject", "edits", "archive", "restore"}:
+        if action in {"approve", "reject", "edits", "request", "archive", "restore"}:
             if action in {"archive", "restore"}:
                 market.transition(raw_id, "archived" if action == "archive" else "draft", query.from_user.id)
                 await query.edit_message_text(f"آگهی {raw_id} بایگانی شد." if action == "archive" else f"آگهی {raw_id} به پیش‌نویس برگشت.")
                 return
-            target = {"approve": "approved", "reject": "rejected", "edits": "rejected"}[action]
-            note = "لطفاً معلومات آگهی را اصلاح کرده و دوباره ثبت کنید." if action == "edits" else ""
+            target = {"approve": "approved", "reject": "rejected", "edits": "rejected", "request": "rejected"}[action]
+            note = "لطفاً معلومات آگهی را تکمیل یا اصلاح کرده و دوباره ثبت کنید." if action in {"edits", "request"} else ""
             market.transition(raw_id, target, query.from_user.id, note)
             ad = market.get_ad(raw_id)
-            await query.edit_message_text(f"آگهی {raw_id}: {'تأیید شد' if action == 'approve' else 'برای اصلاح برگشت' if action == 'edits' else 'رد شد'}.")
+            await query.edit_message_text(
+                f"آگهی {raw_id}: {'تأیید شد' if action == 'approve' else 'برای تکمیل به فروشنده برگشت' if action in {'edits', 'request'} else 'رد شد'}."
+            )
             if action == "approve":
                 await _publish_ad(context, raw_id, query.from_user.id)
             elif ad:
-                try: await context.bot.send_message(ad["owner_id"], f"آگهی {raw_id} نیاز به اصلاح دارد. یادداشت مدیر: {note or 'با مدیران تماس بگیرید.'}")
-                except TelegramError: pass
+                try:
+                    await context.bot.send_message(ad["owner_id"], f"آگهی {raw_id} نیاز به اصلاح دارد. یادداشت مدیر: {note or 'با مدیران تماس بگیرید.'}")
+                except TelegramError as exc:
+                    logger.info("Unable to notify owner of ad review %s: %s", raw_id, type(exc).__name__)
         elif action in {"review", "dismiss"}:
             market.review_report(raw_id, query.from_user.id, action == "dismiss")
             await query.edit_message_text(f"گزارش {raw_id} بررسی شد.")
@@ -203,38 +309,36 @@ async def _publish_ad(context: ContextTypes.DEFAULT_TYPE, ad_id: int, admin_id: 
     if not ad:
         market.fail_publication(ad_id, admin_id)
         return
-    price = "توافقی" if ad["price_negotiable"] else f"{ad['price_minor']:,} افغانی"
-    kind = {"sale": "فروش", "wanted": "خرید", "rental": "کرایه", "service": "خدمات"}.get(ad["ad_type"], "آگهی")
-    caption = f"آگهی #{ad_id} | {ad['title']}\n{ad['category_name']} | {kind} | {ad['city']}\nقیمت: {price}"
-    details = f"{caption}\n\n{ad['description']}\n\nتماس: {ad['contact']}"
+    caption = f"{ad['title']} | آگهی #{ad_id}"
+    details = format_public_ad(ad)
     try:
         photos = market.photos(ad_id)
-        report_button = InlineKeyboardMarkup([[InlineKeyboardButton("گزارش آگهی", callback_data=f"report:{ad_id}")]])
+        buttons = [[InlineKeyboardButton("⚠️ گزارش آگهی", callback_data=f"report:{ad_id}")]]
+        username = ad["owner_username"]
+        if username and re.fullmatch(r"[A-Za-z][A-Za-z0-9_]{4,31}", username):
+            buttons.insert(0, [InlineKeyboardButton("💬 پیام به فروشنده", url=f"https://t.me/{username}")])
+        publication_buttons = InlineKeyboardMarkup(buttons)
         if len(photos) > 1:
             media = [InputMediaPhoto(media=file_id, caption=caption if index == 0 else None) for index, file_id in enumerate(photos)]
             messages = await context.bot.send_media_group(config.publication_chat_id, media)
             message_ids = [message.message_id for message in messages]
             market.record_publication_messages(ad_id, config.publication_chat_id, message_ids)
-            details_message = await context.bot.send_message(config.publication_chat_id, details)
+            details_message = await context.bot.send_message(config.publication_chat_id, details, reply_markup=publication_buttons)
             market.add_publication_message(ad_id, config.publication_chat_id, details_message.message_id)
             market.finish_album_publication(ad_id, config.publication_chat_id, [*message_ids, details_message.message_id])
-            message = messages[0]
         elif photos:
-            message = await context.bot.send_photo(config.publication_chat_id, photos[0], caption=caption, reply_markup=report_button)
+            message = await context.bot.send_photo(config.publication_chat_id, photos[0], caption=caption)
             market.record_publication_message(ad_id, message.message_id, config.publication_chat_id)
-            details_message = await context.bot.send_message(config.publication_chat_id, details)
+            details_message = await context.bot.send_message(config.publication_chat_id, details, reply_markup=publication_buttons)
             market.add_publication_message(ad_id, config.publication_chat_id, details_message.message_id)
             market.finish_publication(ad_id, message.message_id, config.publication_chat_id)
         else:
-            message = await context.bot.send_message(config.publication_chat_id, details, reply_markup=report_button)
+            message = await context.bot.send_message(config.publication_chat_id, details, reply_markup=publication_buttons)
             market.finish_publication(ad_id, message.message_id, config.publication_chat_id)
-        if len(photos) > 1:
-            try:
-                await context.bot.send_message(config.publication_chat_id, "برای گزارش این آگهی از دکمه استفاده کنید.", reply_markup=report_button)
-            except TelegramError as exc:
-                logger.info("Report button delivery failed for ad %s: %s", ad_id, type(exc).__name__)
-        try: await context.bot.send_message(ad["owner_id"], f"آگهی {ad_id} در بازارچه نشر شد.")
-        except TelegramError: pass
+        try:
+            await context.bot.send_message(ad["owner_id"], f"آگهی {ad_id} در بازارچه نشر شد.")
+        except TelegramError as exc:
+            logger.info("Publication completed but owner notification failed for ad %s: %s", ad_id, type(exc).__name__)
     except TelegramError as exc:
         logger.warning("Publication attempt failed for ad %s: %s", ad_id, type(exc).__name__)
         market.fail_publication(ad_id, admin_id)
@@ -252,7 +356,11 @@ async def _settings(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if key == "links_allowed":
             value = "0" if market.get_setting(key, "1") == "1" else "1"
         elif key == "review_mode":
-            value = "auto" if market.get_setting(key, context.application.bot_data["config"].moderation_review_mode) == "required" else "required"
+            value = "required"
+        elif key == "welcome_enabled":
+            value = "0" if market.get_setting(key, "1") == "1" else "1"
+        elif key == "join_approval":
+            value = "0" if market.get_setting(key, "0") == "1" else "1"
         elif key == "public_rankings":
             value = "0" if market.get_setting(key, "1") == "1" else "1"
         elif key == "blocked_phrases":
@@ -263,8 +371,21 @@ async def _settings(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             await query.edit_message_text("این تنظیم شناخته نشد.")
             return
         market.set_setting(key, value, query.from_user.id)
-        destination = "publication" if key == "review_mode" else "reputation" if key == "public_rankings" else "antispam"
-        await query.edit_message_text(f"تنظیم به‌روز شد: {key} = {value}", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("بازگشت", callback_data=f"admin:{destination}")]]))
+        destination = "publication" if key == "review_mode" else "reputation" if key == "public_rankings" else "group" if key in {"welcome_enabled", "join_approval"} else "antispam"
+        labels = {
+            "links_allowed": "اجازهٔ پیوند",
+            "review_mode": "تأیید مدیر پیش از نشر",
+            "welcome_enabled": "خوش‌آمدگویی",
+            "join_approval": "تأیید مدیر برای درخواست‌های عضویت",
+            "public_rankings": "رتبه‌بندی عمومی",
+        }
+        state = "روشن" if value == "1" else "خاموش"
+        if key == "review_mode":
+            state = "اجباری"
+        await query.edit_message_text(
+            f"{labels.get(key, key)}: {state}.",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("بازگشت", callback_data=f"admin:{destination}")]]),
+        )
     except MarketplaceError as exc:
         await query.edit_message_text(str(exc))
 
@@ -299,6 +420,54 @@ async def _trust_toggle(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         await query.edit_message_text(f"وضعیت اعتماد کاربر {user_id}: {'مورد اعتماد' if trusted else 'عادی'}.")
     except ValueError:
         await query.edit_message_text("شناسه معتبر نیست.")
+
+
+async def _group_review_action(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    if not _is_admin(context, query.from_user.id):
+        await _deny(query)
+        return
+    await query.answer()
+    try:
+        event_id = int(query.data.partition(":")[2])
+        chat_id, message_id, username = _market(context).mark_group_message_reviewed(event_id, query.from_user.id)
+        url = _group_message_url(chat_id, message_id, username)
+        if url:
+            await query.edit_message_text(
+                f"پیام احتمالی آگهی #{event_id} بررسی‌شده ثبت شد؛ پیام اصلی حذف یا تغییر داده نشد.",
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("بازکردن پیام", url=url)]]),
+            )
+        else:
+            await query.edit_message_text(f"پیام احتمالی آگهی #{event_id} بررسی‌شده ثبت شد؛ پیام اصلی حذف یا تغییر داده نشد.")
+    except (ValueError, MarketplaceError) as exc:
+        await query.edit_message_text(str(exc) if isinstance(exc, MarketplaceError) else "شناسهٔ پیام معتبر نیست.")
+
+
+async def join_request_decision(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    if not _is_admin(context, query.from_user.id):
+        await _deny(query)
+        return
+    await query.answer()
+    try:
+        _, decision, raw_chat_id, raw_user_id = query.data.split(":")
+        chat_id, user_id = int(raw_chat_id), int(raw_user_id)
+        if decision == "approve":
+            await context.bot.approve_chat_join_request(chat_id, user_id)
+        elif decision == "reject":
+            await context.bot.decline_chat_join_request(chat_id, user_id)
+        else:
+            raise ValueError
+        db = context.application.bot_data["database"]
+        with db.transaction() as conn:
+            conn.execute(
+                "INSERT INTO admin_actions(admin_id,action,target) VALUES(?,?,?)",
+                (query.from_user.id, f"join_request_{decision}", f"{chat_id}:{user_id}"),
+            )
+        await query.edit_message_text(f"درخواست عضویت کاربر {user_id}: {'پذیرفته شد' if decision == 'approve' else 'رد شد'}.")
+    except (ValueError, TelegramError) as exc:
+        logger.info("Join request decision failed: %s", type(exc).__name__)
+        await query.edit_message_text("درخواست پیدا نشد، پایان یافته یا ربات اجازهٔ مدیریت آن را ندارد.")
 
 
 async def _feature_toggle(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -342,6 +511,18 @@ async def warn_user(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await update.effective_message.reply_text("کاربرد: /warn شناسه_کاربر دلیل"); return
     count = context.application.bot_data["moderation"].warn(int(context.args[0]), update.effective_user.id, " ".join(context.args[1:]))
     await update.effective_message.reply_text(f"اخطار ثبت شد. شمار اخطارها: {count}.")
+
+
+async def set_welcome_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _is_admin(context, update.effective_user.id):
+        await update.effective_message.reply_text("این فرمان برای مدیران است.")
+        return
+    value = " ".join(context.args).strip()
+    if not value or len(value) > 3000:
+        await update.effective_message.reply_text("متن خوش‌آمدگویی باید میان ۱ تا ۳۰۰۰ نویسه باشد. کاربرد: /welcome_set متن")
+        return
+    _market(context).set_setting("welcome_message", value, update.effective_user.id)
+    await update.effective_message.reply_text("متن خوش‌آمدگویی ذخیره شد.")
 
 
 def _target_args(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int | None:
@@ -636,9 +817,12 @@ def admin_handlers() -> list:
         CommandHandler("category_add", category_add), CommandHandler("rules_set", set_rules),
         CommandHandler("category_rename", category_rename), CommandHandler("category_move", category_move),
         CommandHandler("blockphrase", block_phrase),
-        CallbackQueryHandler(_dashboard_callback, pattern=r"^admin:[a-z]+$"),
-        CallbackQueryHandler(_admin_action, pattern=r"^(ad:(approve|reject|edits|archive|restore):\d+|report-(review|dismiss):\d+)$"),
-        CallbackQueryHandler(_settings, pattern=r"^setting:(links_allowed|review_mode|blocked_phrases|public_rankings)$"),
+        CommandHandler("welcome_set", set_welcome_message),
+        CallbackQueryHandler(_dashboard_callback, pattern=r"^admin:[a-z_]+$"),
+        CallbackQueryHandler(_admin_action, pattern=r"^(ad:(approve|reject|edits|request|archive|restore):\d+|report-(review|dismiss):\d+)$"),
+        CallbackQueryHandler(_group_review_action, pattern=r"^group-review:\d+$"),
+        CallbackQueryHandler(join_request_decision, pattern=r"^join:(approve|reject):-?\d+:\d+$"),
+        CallbackQueryHandler(_settings, pattern=r"^setting:(links_allowed|review_mode|blocked_phrases|public_rankings|welcome_enabled|join_approval)$"),
         CallbackQueryHandler(_category_toggle, pattern=r"^category:\d+$"),
         CallbackQueryHandler(_trust_toggle, pattern=r"^trust:\d+$"),
         CallbackQueryHandler(_feature_toggle, pattern=r"^featured:\d+$"),

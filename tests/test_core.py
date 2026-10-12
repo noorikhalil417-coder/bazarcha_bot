@@ -19,7 +19,7 @@ from services.backup import (
     restore_backup,
     validate_backup,
 )
-from services.marketplace import Marketplace, MarketplaceError, validate_ad
+from services.marketplace import Marketplace, MarketplaceError, format_price, parse_price_input, validate_ad
 from services.moderation import Moderation
 
 VALID_ENV = {"TELEGRAM_BOT_TOKEN": "123456:placeholder", "ADMIN_IDS": "41,42"}
@@ -176,13 +176,11 @@ class AdvertisementTests(ProjectTestCase):
 
     def test_reputation_is_granted_once_only_after_approval(self):
         ad_id = self.make_draft()
-        self.market.submit(ad_id, 100, review_required=False)
+        self.assertEqual(self.market.submit(ad_id, 100, review_required=False), "pending")
         with self.database.connect() as conn:
             self.assertEqual(conn.execute("SELECT reputation FROM users WHERE user_id=100").fetchone()[0], 0)
-        self.market.transition(ad_id, "publishing")
-        self.market.transition(ad_id, "publication_failed")
         with self.assertRaises(MarketplaceError):
-            self.market.transition(ad_id, "approved")
+            self.market.transition(ad_id, "publishing")
         second = self.make_draft(title="آگهی دوم")
         self.market.submit(second, 100)
         self.market.transition(second, "approved", admin_id=41)
@@ -193,6 +191,34 @@ class AdvertisementTests(ProjectTestCase):
         with self.database.connect() as conn:
             self.assertEqual(conn.execute("SELECT reputation FROM users WHERE user_id=100").fetchone()[0], 1)
             self.assertEqual(conn.execute("SELECT count(*) FROM reputation_events WHERE ad_id=?", (second,)).fetchone()[0], 1)
+
+    def test_afghan_price_inputs_preserve_negotiability_and_reject_ambiguity(self):
+        self.assertEqual(parse_price_input("۳۰۰۰ افغانی"), (3000, False))
+        self.assertEqual(parse_price_input("3000 AFN"), (3000, False))
+        self.assertEqual(parse_price_input("۳ هزار"), (3000, False))
+        self.assertEqual(parse_price_input("قیمت ۵هزار توافقی"), (5000, True))
+        self.assertEqual(parse_price_input("۵٬۰۰۰ افغانی با جورآمد"), (5000, True))
+        self.assertEqual(parse_price_input("با جورآمد"), (None, True))
+        self.assertEqual(parse_price_input("توافقی"), (None, True))
+        for ambiguous in ("شاید ۳ هزار", "قیمت ۵ تا ۷ هزار", "۰ افغانی", "قیمت پنج هزار"):
+            with self.subTest(value=ambiguous), self.assertRaises(MarketplaceError):
+                parse_price_input(ambiguous)
+        self.assertEqual(format_price({"price_minor": 3000, "price_negotiable": 0}), "۳٬۰۰۰ افغانی")
+        self.assertEqual(format_price({"price_minor": 5000, "price_negotiable": 1}), "۵٬۰۰۰ افغانی؛ قابل جورآمد")
+        self.assertEqual(format_price({"price_minor": None, "price_negotiable": 1}), "توافقی")
+
+    def test_rejection_and_request_for_correction_have_distinct_owner_statuses(self):
+        from handlers.user import _ad_status_label
+
+        rejected = self.make_draft(title="آگهی ردشده")
+        self.market.submit(rejected, 100)
+        self.market.transition(rejected, "rejected", admin_id=41)
+        correction = self.make_draft(title="آگهی نیازمند اصلاح")
+        self.market.submit(correction, 100)
+        self.market.transition(correction, "rejected", admin_id=41, note="معلومات محل را تکمیل کنید.")
+        statuses = {row["ad_id"]: _ad_status_label(row) for row in self.market.user_ads(100)}
+        self.assertEqual(statuses[rejected], "ردشده")
+        self.assertEqual(statuses[correction], "نیازمند اصلاح")
 
     def test_weekly_rankings_include_approved_ads_and_are_limited(self):
         first = self.make_draft(title="رتبه نخست")
@@ -360,6 +386,18 @@ class ModerationTests(ProjectTestCase):
         self.assertEqual(moderation.warn(300, 41, "دلیل دوم"), 2)
         self.assertEqual(moderation.warning_count(300), 2)
 
+    def test_group_review_queue_deduplicates_and_tracks_admin_decisions(self):
+        event_id, created = self.market.flag_group_message(100, -1001234567890, 88, "bazaarche")
+        duplicate_id, duplicate_created = self.market.flag_group_message(100, -1001234567890, 88, "bazaarche")
+        self.assertTrue(created)
+        self.assertFalse(duplicate_created)
+        self.assertEqual(event_id, duplicate_id)
+        self.assertEqual(len(self.market.pending_group_reviews()), 1)
+        self.assertEqual(self.market.mark_group_message_reviewed(event_id, 41), (-1001234567890, 88, "bazaarche"))
+        self.assertEqual(self.market.pending_group_reviews(), [])
+        with self.assertRaises(MarketplaceError):
+            self.market.mark_group_message_reviewed(event_id, 41)
+
 
 class AuthorizationAndBackupTests(ProjectTestCase):
     def test_admin_allowlist_and_callback_denial(self):
@@ -373,6 +411,215 @@ class AuthorizationAndBackupTests(ProjectTestCase):
         asyncio.run(_dashboard_callback(update, context))
         query.answer.assert_awaited_once()
         query.edit_message_text.assert_not_awaited()
+
+    def test_start_menu_and_new_ad_buttons_begin_the_wizard(self):
+        from handlers.user import AD_TYPE, CATEGORY, _begin, _select_category, _select_type, start
+
+        user = SimpleNamespace(id=100, username="seller", full_name="Seller")
+        reply = AsyncMock()
+        context = SimpleNamespace(
+            application=SimpleNamespace(bot_data={"marketplace": self.market}),
+            user_data={},
+        )
+        asyncio.run(start(SimpleNamespace(effective_user=user, effective_message=SimpleNamespace(reply_text=reply)), context))
+        keyboard = reply.await_args.kwargs["reply_markup"]
+        labels = [button.text for row in keyboard.inline_keyboard for button in row]
+        self.assertIn("📝 ثبت آگهی جدید", labels)
+        self.assertIn("🔎 جست‌وجوی آگهی‌ها", labels)
+        self.assertIn("📂 دسته‌بندی آگهی‌ها", labels)
+
+        query = SimpleNamespace(from_user=user, data="newad", answer=AsyncMock(), edit_message_text=AsyncMock())
+        update = SimpleNamespace(callback_query=query, effective_user=user)
+        self.assertEqual(asyncio.run(_begin(update, context)), CATEGORY)
+        self.assertTrue(query.edit_message_text.await_args.kwargs["reply_markup"].inline_keyboard)
+
+        category_id = self.market.categories()[0]["category_id"]
+        query = SimpleNamespace(from_user=user, data=f"adcat:{category_id}", answer=AsyncMock(), edit_message_text=AsyncMock())
+        update = SimpleNamespace(callback_query=query, effective_user=user)
+        self.assertEqual(asyncio.run(_select_category(update, context)), AD_TYPE)
+        query = SimpleNamespace(from_user=user, data="adtype:sale", answer=AsyncMock(), edit_message_text=AsyncMock())
+        update = SimpleNamespace(callback_query=query, effective_user=user)
+        from handlers.user import TITLE
+        self.assertEqual(asyncio.run(_select_type(update, context)), TITLE)
+        self.assertIsNotNone(self.market.draft_for_user(user.id))
+
+    def test_wizard_back_cancel_and_timeout_preserve_or_archive_draft_as_expected(self):
+        from handlers.user import TITLE, _cancel_draft, _wizard_timeout, wizard_navigation
+
+        user = SimpleNamespace(id=100, username="seller", full_name="Seller")
+        context = SimpleNamespace(
+            application=SimpleNamespace(bot_data={"marketplace": self.market}),
+            user_data={},
+            bot=SimpleNamespace(send_message=AsyncMock()),
+        )
+        ad_id = self.market.create_draft(user.id, self.category_id, "sale")
+        query = SimpleNamespace(from_user=user, data="ad:back:title", answer=AsyncMock(), edit_message_text=AsyncMock())
+        update = SimpleNamespace(callback_query=query, effective_user=user)
+        self.assertEqual(asyncio.run(wizard_navigation(update, context)), TITLE)
+        self.assertEqual(self.market.get_ad(ad_id)["status"], "draft")
+
+        query = SimpleNamespace(from_user=user, data="ad:cancel", answer=AsyncMock(), edit_message_text=AsyncMock())
+        update = SimpleNamespace(callback_query=query, effective_user=user)
+        asyncio.run(_cancel_draft(update, context))
+        self.assertEqual(self.market.get_ad(ad_id)["status"], "archived")
+
+        timeout_update = SimpleNamespace(effective_chat=SimpleNamespace(id=100))
+        asyncio.run(_wizard_timeout(timeout_update, context))
+        context.bot.send_message.assert_awaited_once()
+
+    def test_approval_callback_is_one_shot(self):
+        from handlers.admin import _admin_action
+
+        ad_id = self.make_draft()
+        self.market.submit(ad_id, 100)
+        context = SimpleNamespace(application=SimpleNamespace(bot_data={
+            "config": Config.from_env(VALID_ENV),
+            "marketplace": self.market,
+        }))
+        for _ in range(2):
+            query = SimpleNamespace(from_user=SimpleNamespace(id=41), data=f"ad:approve:{ad_id}", answer=AsyncMock(), edit_message_text=AsyncMock())
+            asyncio.run(_admin_action(SimpleNamespace(callback_query=query), context))
+        self.assertEqual(self.market.get_ad(ad_id)["status"], "approved")
+        with self.database.connect() as conn:
+            self.assertEqual(conn.execute("SELECT count(*) FROM admin_actions WHERE action='ad_approved' AND target=?", (str(ad_id),)).fetchone()[0], 1)
+
+    def test_group_ad_detection_is_cautious_and_join_requests_are_admin_controlled(self):
+        from bot import _handle_join_request, _looks_like_ad
+        from handlers.admin import join_request_decision
+
+        self.assertFalse(_looks_like_ad("سلام، امروز هوا خوب است.", False))
+        self.assertTrue(_looks_like_ad("گوشی فروشی، قیمت ۵ هزار افغانی، تماس 0700000000", False))
+        self.assertTrue(_looks_like_ad("لپ‌تاپ فروشی", True))
+
+        self.market.set_setting("join_approval", "1", 41)
+        config = Config.from_env(VALID_ENV)
+        request = SimpleNamespace(
+            chat=SimpleNamespace(id=-1001234567890, title="گروه بازارچه"),
+            from_user=SimpleNamespace(id=300, username="new_user", full_name="New User"),
+        )
+        send_message = AsyncMock()
+        context = SimpleNamespace(
+            application=SimpleNamespace(bot_data={"config": config, "marketplace": self.market}),
+            bot=SimpleNamespace(send_message=send_message),
+        )
+        asyncio.run(_handle_join_request(SimpleNamespace(chat_join_request=request), context))
+        self.assertEqual(send_message.await_count, len(config.admin_ids))
+        join_markup = send_message.await_args.kwargs["reply_markup"]
+        self.assertEqual(join_markup.inline_keyboard[0][0].callback_data, "join:approve:-1001234567890:300")
+
+        approve = AsyncMock()
+        query = SimpleNamespace(
+            from_user=SimpleNamespace(id=41),
+            data="join:approve:-1001234567890:300",
+            answer=AsyncMock(),
+            edit_message_text=AsyncMock(),
+        )
+        admin_context = SimpleNamespace(
+            application=SimpleNamespace(bot_data={"config": config, "database": self.database}),
+            bot=SimpleNamespace(approve_chat_join_request=approve),
+        )
+        asyncio.run(join_request_decision(SimpleNamespace(callback_query=query), admin_context))
+        approve.assert_awaited_once_with(-1001234567890, 300)
+
+    def test_non_admin_cannot_resolve_group_message_reviews(self):
+        from handlers.admin import _group_review_action
+
+        event_id, _ = self.market.flag_group_message(100, -1001234567890, 89, "bazaarche")
+        query = SimpleNamespace(
+            from_user=SimpleNamespace(id=99),
+            data=f"group-review:{event_id}",
+            answer=AsyncMock(),
+            edit_message_text=AsyncMock(),
+        )
+        context = SimpleNamespace(application=SimpleNamespace(bot_data={
+            "config": Config.from_env(VALID_ENV),
+            "marketplace": self.market,
+        }))
+        asyncio.run(_group_review_action(SimpleNamespace(callback_query=query), context))
+        query.answer.assert_awaited_once()
+        query.edit_message_text.assert_not_awaited()
+        self.assertEqual(len(self.market.pending_group_reviews()), 1)
+
+    def test_direct_group_ad_candidate_is_queued_without_deleting_the_source_message(self):
+        from bot import _moderate_message
+
+        config = Config.from_env({**VALID_ENV, "GROUP_ID": "-1001234567890"})
+        message = SimpleNamespace(
+            text="گوشی فروشی، قیمت ۵ هزار افغانی، تماس 0700000000",
+            caption=None,
+            photo=[],
+            message_id=501,
+            reply_text=AsyncMock(),
+        )
+        update = SimpleNamespace(
+            effective_message=message,
+            effective_user=SimpleNamespace(id=100, username="seller", full_name="Seller"),
+            effective_chat=SimpleNamespace(id=-1001234567890, title="بازارچه", username="bazaarche"),
+        )
+        send_message = AsyncMock()
+        context = SimpleNamespace(
+            application=SimpleNamespace(bot_data={
+                "config": config,
+                "marketplace": self.market,
+                "database": self.database,
+                "moderation": Moderation(self.database),
+            }),
+            bot=SimpleNamespace(send_message=send_message),
+        )
+        asyncio.run(_moderate_message(update, context))
+        self.assertEqual(len(self.market.pending_group_reviews()), 1)
+        message.reply_text.assert_not_awaited()
+        self.assertEqual(send_message.await_count, len(config.admin_ids))
+        asyncio.run(_moderate_message(update, context))
+        self.assertEqual(len(self.market.pending_group_reviews()), 1)
+        self.assertEqual(send_message.await_count, len(config.admin_ids))
+
+    def test_ad_review_notification_includes_photo_text_preview_and_decisions(self):
+        from handlers.admin import notify_ad_reviewers
+
+        ad_id = self.make_draft()
+        self.market.add_photo(ad_id, 100, "submitted-photo")
+        self.market.submit(ad_id, 100)
+        config = Config.from_env(VALID_ENV)
+        send_photo = AsyncMock()
+        send_message = AsyncMock()
+        context = SimpleNamespace(
+            application=SimpleNamespace(bot_data={"config": config, "marketplace": self.market}),
+            bot=SimpleNamespace(send_photo=send_photo, send_media_group=AsyncMock(), send_message=send_message),
+        )
+        asyncio.run(notify_ad_reviewers(context, ad_id))
+        self.assertEqual(send_photo.await_count, len(config.admin_ids))
+        self.assertEqual(send_message.await_count, len(config.admin_ids))
+        self.assertIn("گوشی خوب", send_message.await_args.args[1])
+        callback_data = [
+            button.callback_data
+            for row in send_message.await_args.kwargs["reply_markup"].inline_keyboard
+            for button in row
+        ]
+        self.assertEqual(callback_data, [f"ad:approve:{ad_id}", f"ad:request:{ad_id}", f"ad:reject:{ad_id}"])
+
+    def test_publication_contains_complete_details_and_only_valid_seller_link(self):
+        from handlers.admin import _publish_ad
+
+        ad_id = self.make_draft()
+        self.market.submit(ad_id, 100)
+        self.market.transition(ad_id, "approved", admin_id=41)
+        config = Config.from_env({**VALID_ENV, "AD_PUBLICATION_CHAT_ID": "-1001234567890"})
+        send_message = AsyncMock(return_value=SimpleNamespace(message_id=900))
+        context = SimpleNamespace(
+            application=SimpleNamespace(bot_data={"config": config, "marketplace": self.market}),
+            bot=SimpleNamespace(send_message=send_message, send_photo=AsyncMock(), send_media_group=AsyncMock()),
+        )
+        asyncio.run(_publish_ad(context, ad_id, 41))
+        self.assertEqual(self.market.get_ad(ad_id)["status"], "published")
+        post_text = send_message.await_args_list[0].args[1]
+        self.assertIn("گوشی خوب", post_text)
+        self.assertIn("توضیحات", post_text)
+        self.assertIn("موقعیت: کابل", post_text)
+        self.assertIn("راه تماس: 0700000000", post_text)
+        markup = send_message.await_args_list[0].kwargs["reply_markup"]
+        urls = [button.url for row in markup.inline_keyboard for button in row if button.url]
+        self.assertEqual(urls, ["https://t.me/seller"])
 
     def test_each_review_callback_checks_admin_id(self):
         from handlers.admin import _admin_action

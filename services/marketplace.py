@@ -11,6 +11,7 @@ from typing import Any
 from database import Database
 
 AD_TYPES = {"sale", "wanted", "rental", "service"}
+PRICE_DIGITS = str.maketrans("۰۱۲۳۴۵۶۷۸۹٠١٢٣٤٥٦٧٨٩", "01234567890123456789")
 TRANSITIONS = {
     "draft": {"pending", "archived"}, "pending": {"approved", "rejected", "archived"},
     "approved": {"publishing", "archived"}, "publishing": {"published", "publication_failed"},
@@ -22,6 +23,74 @@ TRANSITIONS = {
 
 class MarketplaceError(ValueError):
     pass
+
+
+def parse_price_input(value: str) -> tuple[int | None, bool]:
+    """Parse an explicit AFN price without inferring values from ambiguous text."""
+    normalized = re.sub(r"\s+", " ", value.translate(PRICE_DIGITS).strip().casefold())
+    negotiable = False
+    if normalized in {"توافقی", "قابل مذاکره", "با جورآمد", "جورآمد"}:
+        return None, True
+
+    normalized, count = re.subn(r"(?:با\s*جورآمد|قابل مذاکره|توافقی|جورآمد)\s*$", "", normalized)
+    negotiable = count > 0
+    normalized = re.sub(r"^قیمت\s*", "", normalized).strip()
+    normalized = re.sub(r"\s*(?:افغانی|افغانۍ|afn)\s*$", "", normalized).strip()
+
+    multiplier = 1
+    if re.search(r"\s*هزار$", normalized):
+        normalized = re.sub(r"\s*هزار$", "", normalized).strip()
+        multiplier = 1000
+
+    amount_pattern = r"(?:[0-9]+|[0-9]{1,3}(?:[,،٬ ][0-9]{3})+)"
+    if not re.fullmatch(amount_pattern, normalized):
+        if negotiable and not normalized:
+            return None, True
+        raise MarketplaceError("قیمت را نفهمیدم؛ عدد، «۳ هزار»، «با جورآمد» یا «توافقی» بنویسید. قیمت را حدس نمی‌زنم.")
+    amount = int(re.sub(r"[,،٬ ]", "", normalized)) * multiplier
+    if amount <= 0 or amount > 10**12:
+        raise MarketplaceError("قیمت باید عددی مثبت و حداکثر ۱٬۰۰۰٬۰۰۰٬۰۰۰٬۰۰۰ افغانی باشد.")
+    return amount, negotiable
+
+
+def format_price(ad: dict[str, Any] | sqlite3.Row) -> str:
+    amount = ad["price_minor"]
+    negotiable = bool(ad["price_negotiable"])
+    if amount is None:
+        return "توافقی"
+    formatted = f"{amount:,}".replace(",", "٬").translate(str.maketrans("0123456789", "۰۱۲۳۴۵۶۷۸۹"))
+    return f"{formatted} افغانی" + ("؛ قابل جورآمد" if negotiable else "")
+
+
+def category_emoji(category_name: str) -> str:
+    label = category_name.casefold()
+    for words, emoji in (
+        (("موبایل", "تکنالوژی"), "📱"),
+        (("موتر", "وسایط"), "🚗"),
+        (("خانه", "جایداد"), "🏠"),
+        (("لباس", "شخصی"), "👕"),
+        (("لوازم خانه",), "🛋️"),
+        (("خدمات",), "🛠️"),
+        (("کار", "استخدام"), "💼"),
+        (("حیوان", "زراعت"), "🌾"),
+    ):
+        if any(word in label for word in words):
+            return emoji
+    return "🛍️"
+
+
+def format_public_ad(ad: dict[str, Any] | sqlite3.Row) -> str:
+    kind = {"sale": "فروش", "wanted": "خرید", "rental": "کرایه", "service": "خدمات"}.get(ad["ad_type"], "آگهی")
+    return (
+        f"{category_emoji(ad['category_name'])} {ad['title']}\n"
+        f"📂 {ad['category_name']} | {kind}\n"
+        f"💰 قیمت: {format_price(ad)}\n\n"
+        f"📝 توضیحات:\n{ad['description']}\n\n"
+        f"📍 موقعیت: {ad['city']}\n"
+        f"📞 راه تماس: {ad['contact']}\n"
+        f"🔖 شناسهٔ آگهی: #{ad['ad_id']}\n"
+        "🏷️ بازارچه"
+    )
 
 
 def normalize_text(value: str) -> str:
@@ -201,6 +270,12 @@ class Marketplace:
             conn.execute("INSERT OR IGNORE INTO ad_photos(ad_id,file_id,sort_order) VALUES(?,?,?)", (ad_id, file_id, count))
 
     def submit(self, ad_id: int, owner_id: int, review_required: bool = True) -> str:
+        """Queue a complete draft for administrator approval.
+
+        ``review_required`` remains accepted for callers from older versions; all
+        submissions now require approval regardless of that legacy argument.
+        """
+        _ = review_required
         with self.db.transaction() as conn:
             row = conn.execute("SELECT * FROM ads WHERE ad_id=? AND owner_id=? AND status='draft'", (ad_id, owner_id)).fetchone()
             if not row:
@@ -210,13 +285,13 @@ class Marketplace:
             duplicate = conn.execute("SELECT 1 FROM ads WHERE owner_id=? AND title=? AND description=? AND status IN ('pending','approved','publishing','published')", (owner_id, data["title"], data["description"])).fetchone()
             if duplicate:
                 raise MarketplaceError("آگهی مشابه شما از پیش ثبت شده است.")
-            status = "pending" if review_required else "approved"
+            status = "pending"
             conn.execute("UPDATE ads SET status=?, expires_at=?, updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE ad_id=?", (status, (datetime.now(UTC) + timedelta(days=self.expiry_days)).isoformat(), ad_id))
             return status
 
     def get_ad(self, ad_id: int) -> sqlite3.Row | None:
         with self.db.connect() as conn:
-            return conn.execute("SELECT ads.*, categories.name AS category_name FROM ads JOIN categories USING(category_id) WHERE ad_id=?", (ad_id,)).fetchone()
+            return conn.execute("SELECT ads.*, categories.name AS category_name, users.username AS owner_username FROM ads JOIN categories USING(category_id) JOIN users ON users.user_id=ads.owner_id WHERE ad_id=?", (ad_id,)).fetchone()
 
     def owned_ad(self, ad_id: int, owner_id: int) -> sqlite3.Row | None:
         with self.db.connect() as conn:
@@ -224,7 +299,7 @@ class Marketplace:
 
     def user_ads(self, owner_id: int, limit: int = 20) -> list[sqlite3.Row]:
         with self.db.connect() as conn:
-            return conn.execute("SELECT ad_id,title,status,created_at FROM ads WHERE owner_id=? ORDER BY ad_id DESC LIMIT ?", (owner_id, min(max(limit, 1), 50))).fetchall()
+            return conn.execute("SELECT ad_id,title,status,review_note,created_at FROM ads WHERE owner_id=? ORDER BY ad_id DESC LIMIT ?", (owner_id, min(max(limit, 1), 50))).fetchall()
 
     def transition(self, ad_id: int, new_status: str, admin_id: int | None = None, note: str = "") -> None:
         with self.db.transaction() as conn:
@@ -403,7 +478,7 @@ class Marketplace:
             return row[0] if row else default
 
     def set_setting(self, key: str, value: str, admin_id: int) -> None:
-        if key not in {"rules", "welcome_message", "blocked_phrases", "links_allowed", "review_mode", "featured_enabled", "public_rankings"}:
+        if key not in {"rules", "welcome_message", "welcome_enabled", "blocked_phrases", "links_allowed", "review_mode", "featured_enabled", "public_rankings", "join_approval"}:
             raise MarketplaceError("این تنظیم قابل تغییر نیست.")
         with self.db.transaction() as conn:
             conn.execute("INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", (key, value[:3000]))
@@ -412,6 +487,61 @@ class Marketplace:
     def pending_ads(self, limit: int = 10) -> list[sqlite3.Row]:
         with self.db.connect() as conn:
             return conn.execute("SELECT ads.*,categories.name category_name FROM ads JOIN categories USING(category_id) WHERE status='pending' ORDER BY ad_id LIMIT ?", (min(max(limit, 1), 50),)).fetchall()
+
+    def flag_group_message(
+        self, user_id: int, chat_id: int, message_id: int, username: str | None = None,
+        action: str = "review_group_ad",
+    ) -> tuple[int, bool]:
+        if action != "review_group_ad" and not action.startswith("review_"):
+            raise MarketplaceError("نوع بررسی پیام معتبر نیست.")
+        reference = f"{chat_id}:{message_id}:{username or ''}"
+        with self.db.transaction() as conn:
+            existing = conn.execute(
+                "SELECT event_id FROM moderation_events WHERE action=? AND reason=?",
+                (action, reference),
+            ).fetchone()
+            if existing:
+                return int(existing["event_id"]), False
+            cursor = conn.execute(
+                "INSERT INTO moderation_events(user_id,action,reason) VALUES(?,?,?)",
+                (user_id, action, reference),
+            )
+            return int(cursor.lastrowid), True
+
+    def pending_group_reviews(self, limit: int = 20) -> list[sqlite3.Row]:
+        with self.db.connect() as conn:
+            return conn.execute(
+                "SELECT events.event_id,events.user_id,events.reason,events.created_at,events.action,"
+                "users.display_name,users.username FROM moderation_events AS events "
+                "LEFT JOIN users USING(user_id) WHERE substr(events.action,1,7)='review_' "
+                "AND (events.reason GLOB '-[0-9]*:[0-9]*:*' OR events.reason GLOB '[0-9]*:[0-9]*:*') "
+                "AND NOT EXISTS (SELECT 1 FROM admin_actions WHERE action='group_message_review' "
+                "AND target=CAST(events.event_id AS TEXT)) ORDER BY events.event_id LIMIT ?",
+                (min(max(limit, 1), 50),),
+            ).fetchall()
+
+    def mark_group_message_reviewed(self, event_id: int, admin_id: int) -> tuple[int, int, str | None]:
+        with self.db.transaction() as conn:
+            event = conn.execute(
+                "SELECT reason FROM moderation_events WHERE event_id=? AND substr(action,1,7)='review_'",
+                (event_id,),
+            ).fetchone()
+            if not event or conn.execute(
+                "SELECT 1 FROM admin_actions WHERE action='group_message_review' AND target=?",
+                (str(event_id),),
+            ).fetchone():
+                raise MarketplaceError("این پیام پیدا نشد یا پیش از این بررسی شده است.")
+            try:
+                parts = event["reason"].split(":", 2)
+                chat_id, message_id = int(parts[0]), int(parts[1])
+                username = parts[2] or None if len(parts) > 2 else None
+            except (TypeError, ValueError) as exc:
+                raise MarketplaceError("پیوند پیام برای بررسی معتبر نیست.") from exc
+            conn.execute(
+                "INSERT INTO admin_actions(admin_id,action,target) VALUES(?,'group_message_review',?)",
+                (admin_id, str(event_id)),
+            )
+            return chat_id, message_id, username
 
     def open_reports(self, limit: int = 10) -> list[sqlite3.Row]:
         with self.db.connect() as conn:

@@ -74,7 +74,7 @@ class Database:
                     connection.execute("BEGIN IMMEDIATE")
                     connection.execute("ALTER TABLE ads ADD COLUMN expiry_notified_at TEXT")
                     connection.execute("INSERT OR IGNORE INTO settings(key,value) VALUES('rules','با احترام رفتار کنید. آگهی نادرست، تکراری و محتوای خلاف قانون مجاز نیست.')")
-                    connection.execute("INSERT OR IGNORE INTO settings(key,value) VALUES('welcome_message','به بازارچه خوش آمدید! برای ثبت آگهی /newad را بزنید.')")
+                    connection.execute("INSERT OR IGNORE INTO settings(key,value) VALUES('welcome_message','به بازارچه خوش آمدید! برای ثبت یا جست‌وجوی آگهی از منوی ربات استفاده کنید.')")
                     connection.execute("INSERT OR IGNORE INTO settings(key,value) VALUES('blocked_phrases','')")
                     connection.execute("INSERT OR IGNORE INTO settings(key,value) VALUES('links_allowed','1')")
                     connection.execute("INSERT OR IGNORE INTO settings(key,value) VALUES('review_mode','required')")
