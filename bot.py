@@ -232,6 +232,7 @@ def build_application(config: Config, database: Database | None = None) -> Appli
 
 def main() -> None:
     config = Config.from_env()
+    logging.getLogger("httpx").setLevel(logging.WARNING)
     logging.basicConfig(level=getattr(logging, config.log_level), format="%(asctime)s %(levelname)s %(name)s %(message)s")
     application = build_application(config)
     logger.info("Starting Bazaarche long-polling bot")
