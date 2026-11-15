@@ -8,7 +8,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 DEFAULT_CATEGORIES = (
     "موبایل و تکنالوژی", "موتر و وسایط", "خانه و جایداد", "لباس و لوازم شخصی",
     "لوازم خانه", "خدمات", "کار و استخدام", "حیوانات و محصولات زراعتی", "سایر موارد",
@@ -85,6 +85,13 @@ class Database:
                     connection.executescript("BEGIN IMMEDIATE;\n" + _SCHEMA_V3)
                     connection.execute("INSERT OR IGNORE INTO settings(key,value) VALUES('public_rankings','1')")
                     connection.execute("PRAGMA user_version = 3")
+                    connection.commit()
+                    version = 3
+                if version < 4:
+                    connection.execute("BEGIN IMMEDIATE")
+                    connection.execute("ALTER TABLE ads ADD COLUMN miniapp_revision INTEGER NOT NULL DEFAULT 0")
+                    connection.execute("CREATE TABLE miniapp_media (file_id TEXT PRIMARY KEY, ad_id INTEGER NOT NULL REFERENCES ads(ad_id) ON DELETE CASCADE, data BLOB NOT NULL CHECK(length(data)<=2097152))")
+                    connection.execute("PRAGMA user_version = 4")
                     connection.commit()
             finally:
                 connection.close()

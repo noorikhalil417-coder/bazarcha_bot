@@ -5,7 +5,7 @@ from __future__ import annotations
 import html
 import re
 
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update, WebAppInfo
 from telegram.ext import (
     CallbackQueryHandler,
     CommandHandler,
@@ -45,7 +45,7 @@ def _ad_status_label(ad) -> str:
     return STATUS_LABELS.get(ad["status"], ad["status"])
 
 
-def _main_menu() -> tuple[str, InlineKeyboardMarkup]:
+def _main_menu(context=None, update=None) -> tuple[str, InlineKeyboardMarkup]:
     text = "به بازارچه خوش آمدید! از گزینه‌های زیر انتخاب کنید:"
     buttons = [
         [InlineKeyboardButton("📝 ثبت آگهی جدید", callback_data="newad"),
@@ -54,6 +54,10 @@ def _main_menu() -> tuple[str, InlineKeyboardMarkup]:
          InlineKeyboardButton("📋 قوانین بازارچه", callback_data="menu:rules")],
         [InlineKeyboardButton("💬 کمک و راهنمایی", callback_data="menu:help")],
     ]
+    if context and update and getattr(getattr(update, "effective_chat", None), "type", None) == "private":
+        url = context.application.bot_data["config"].mini_app_url
+        if url:
+            buttons.insert(0, [InlineKeyboardButton("✨ بازارچه | ثبت آسان آگهی", web_app=WebAppInfo(url))])
     return text, InlineKeyboardMarkup(buttons)
 
 
@@ -73,7 +77,7 @@ async def _prompt(update: Update, text: str, markup: InlineKeyboardMarkup | None
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     _touch(update, context)
-    text, keyboard = _main_menu()
+    text, keyboard = _main_menu(context, update)
     await update.effective_message.reply_text(text, reply_markup=keyboard)
 
 
@@ -385,7 +389,7 @@ async def _cancel_draft(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
             return ConversationHandler.END
     context.user_data.pop("draft_id", None)
     context.user_data.pop("ad_category", None)
-    text, keyboard = _main_menu()
+    text, keyboard = _main_menu(context, update)
     await query.edit_message_text("روند ثبت آگهی لغو شد.\n\n" + text, reply_markup=keyboard)
     return ConversationHandler.END
 
@@ -400,7 +404,7 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
             return ConversationHandler.END
     context.user_data.pop("draft_id", None)
     context.user_data.pop("ad_category", None)
-    text, keyboard = _main_menu()
+    text, keyboard = _main_menu(context, update)
     await update.effective_message.reply_text("روند لغو شد.\n\n" + text, reply_markup=keyboard)
     return ConversationHandler.END
 
@@ -624,7 +628,7 @@ async def navigation(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         session_id = _market(context).create_search_session(query.from_user.id)
         await _render_search(update, context, session_id, edit=True)
     elif query.data == "menu:home":
-        text, keyboard = _main_menu()
+        text, keyboard = _main_menu(context, update)
         await query.edit_message_text(text, reply_markup=keyboard)
     elif query.data == "menu:rules":
         text = _market(context).get_setting("rules", context.application.bot_data["config"].group_rules)
@@ -665,7 +669,7 @@ async def wizard_navigation(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     await query.answer()
     destination = query.data.partition(":back:")[2]
     if destination == "home":
-        text, keyboard = _main_menu()
+        text, keyboard = _main_menu(context, update)
         await query.edit_message_text(text, reply_markup=keyboard)
         return ConversationHandler.END
 

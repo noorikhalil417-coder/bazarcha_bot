@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="fa" dir="rtl">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="theme-color" content="#e5f5ff"><meta name="description" content="بازارچه؛ ثبت آسان آگهی در تلگرام"><title>بازارچه | ثبت آگهی</title><link rel="stylesheet" href="/style.css"><script src="https://telegram.org/js/telegram-web-app.js"></script><script defer src="/app.js"></script></head>
+<body>
+<div class="ambient one"></div><div class="ambient two"></div>
+<div class="app">
+<header><button class="brand" id="brand" aria-label="خانه"><span class="brand-icon">ب</span><span>بازارچه<small>خرید و فروش، ساده‌تر</small></span></button><button class="round" id="help-top" aria-label="راهنما">؟</button></header>
+<div id="demo-banner" class="demo" hidden>پیش‌نمایش طراحی · برای ثبت واقعی، از داخل ربات وارد شوید.</div>
+<main>
+<section id="home" class="screen">
+<div class="eyebrow"><span class="dot"></span> بازارچهٔ شما در تلگرام</div>
+<h1>یک پیام بفرست،<br><span>آگهی‌ات آماده است.</span></h1>
+<p class="intro">عکس و توضیحات را بده؛ اطلاعات را مرتب کن و برای بررسی بفرست.</p>
+<div class="hero-art" aria-hidden="true"><div class="art-orbit"></div><div class="art-card back"><span>📍</span><b>نزدیک شما</b></div><div class="art-card front"><div class="art-product">📱</div><div><b>یک معاملهٔ خوب</b><small>از همین‌جا شروع می‌شود</small></div><span class="art-check">✓</span></div><span class="spark s1">✧</span><span class="spark s2">✧</span></div>
+<div class="menu-grid"><button class="glass primary tile" id="sell"><span class="tile-icon">＋</span><b>فروش جنس</b><small>آگهی تازه بساز</small><span class="arrow">←</span></button><button class="glass tile" id="wanted"><span class="tile-icon">⌕</span><b>درخواست خرید</b><small>بگو دنبال چی هستی</small><span class="arrow">←</span></button><button class="glass tile compact" id="myads"><span class="tile-icon">▤</span><b>آگهی‌های من</b></button><button class="glass tile compact" id="help"><span class="tile-icon">؟</span><b>راهنما و قوانین</b></button></div>
+<button id="resume" class="resume glass" hidden><span>✎</span><span><b>پیش‌نویست منتظر است</b><small>از جایی که ماندی ادامه بده</small></span><span>←</span></button>
+<div class="trust"><span>✓ تأیید قبل از نشر</span><span>◈ اطلاعات قابل اصلاح</span></div>
+</section>
+<section id="compose" class="screen" hidden>
+<div class="section-heading"><button class="round back" aria-label="بازگشت">→</button><div><h2 id="compose-title">ثبت آگهی فروش</h2><p>از یک توضیح ساده شروع کن</p></div><span class="step-tag">۱ از ۳</span></div>
+<div class="steps"><span class="active">۱ <b>اطلاعات</b></span><i></i><span>۲ <b>تکمیل</b></span><i></i><span>۳ <b>بازبینی</b></span></div>
+<div class="glass panel"><label for="raw" class="field-title">چی برای آگهی داری؟</label><p class="hint">نام جنس، وضعیت، قیمت و شهرت را یکجا بنویس.</p><textarea id="raw" maxlength="3000" rows="5" placeholder="مثلاً: سامسونگ A22، دسته دوم، سالم، ۳۰۰۰ افغانی، مزارشریف"></textarea><div class="input-foot"><span>فارسی، دری و اعداد فارسی پذیرفته می‌شود</span><span id="raw-count">۰ / ۳۰۰۰</span></div></div>
+<label class="upload glass" for="photos"><span class="upload-icon">▧</span><b>عکس جنس را اضافه کن</b><small>تا ۱۰ عکس · انتخاب از گالری</small><span class="upload-plus">＋</span></label><input id="photos" type="file" accept="image/jpeg,image/png,image/webp" multiple hidden><div id="photo-grid" class="photo-grid"></div>
+<div class="note"><span>✦</span><p>قیمت و شهرِ نوشته‌شده را پیدا می‌کنیم؛ موارد نامشخص را خودت تکمیل می‌کنی.</p></div>
+<button class="glass primary action" id="extract">مرتب‌کردن اطلاعات <span>←</span></button>
+<button class="text-button" id="manual">خودم اطلاعات را وارد می‌کنم</button>
+</section>
+<section id="details" class="screen" hidden>
+<div class="section-heading"><button class="round back" aria-label="بازگشت">→</button><div><h2>چند جزئیات کوچک</h2><p>اطلاعات را بررسی و تکمیل کن</p></div><span class="step-tag">۲ از ۳</span></div>
+<div class="steps"><span class="done">✓ <b>اطلاعات</b></span><i></i><span class="active">۲ <b>تکمیل</b></span><i></i><span>۳ <b>بازبینی</b></span></div>
+<form id="details-form" class="glass panel">
+<label>عنوان آگهی<input id="title" required maxlength="120" placeholder="مثلاً: موبایل سامسونگ A22"></label>
+<div class="form-row"><label>دسته‌بندی<select id="category" required><option value="">انتخاب کنید</option></select></label><label>نوع آگهی<select id="ad-type"><option value="sale">فروش</option><option value="wanted">درخواست خرید</option><option value="service">خدمات</option><option value="rental">کرایه</option></select></label></div>
+<div class="form-row"><label>قیمت به افغانی<input id="price" required maxlength="60" placeholder="۳۰۰۰ افغانی یا توافقی"></label><label>شهر / محل<input id="city" required maxlength="80" placeholder="مثلاً: مزارشریف"></label></div>
+<label>توضیحات<textarea id="description" required maxlength="3000" rows="3" placeholder="وضعیت و مشخصات جنس"></textarea></label>
+<fieldset><legend>مشتری چطور با تو تماس بگیرد؟</legend><div class="contact-options"><label class="choice"><input type="radio" name="contact-mode" value="telegram" checked> تلگرام من</label><label class="choice"><input type="radio" name="contact-mode" value="phone"> شماره تماس</label></div><p id="telegram-contact" class="hint"></p><label id="phone-label" hidden>شماره تماس<input id="phone" type="tel" maxlength="22" placeholder="+937XXXXXXXX" dir="ltr"></label></fieldset>
+<label class="consent"><input id="consent" type="checkbox" required><span>موافقم راه تماس انتخاب‌شده در آگهی عمومی نشر شود.</span></label>
+<button class="glass primary action" type="submit">ذخیره و دیدن پیش‌نمایش <span>←</span></button><p class="hint center">پیش‌نویس در حساب تلگرام شما ذخیره می‌شود.</p>
+</form></section>
+<section id="preview" class="screen" hidden><div class="section-heading"><button class="round back" aria-label="بازگشت">→</button><div><h2>آگهی‌ات آماده است</h2><p>یک نگاه آخر، قبل از ارسال</p></div><span class="step-tag">۳ از ۳</span></div><div class="steps"><span class="done">✓ <b>اطلاعات</b></span><i></i><span class="done">✓ <b>تکمیل</b></span><i></i><span class="active">۳ <b>بازبینی</b></span></div><article class="ad-card"><div id="preview-photos" class="preview-photos" hidden></div><div class="ad-body"><span class="ad-badge" id="preview-kind">فروش</span><h2 id="preview-title"></h2><div class="price-line" id="preview-price"></div><div class="ad-meta"><span id="preview-city"></span><span id="preview-category"></span></div><hr><p id="preview-description"></p><div class="ad-contact"><span>راه تماس</span><b id="preview-contact"></b></div></div></article><div class="note"><span>◷</span><p>آگهی پس از تأیید مدیر در گروه نشر می‌شود.</p></div><button class="glass primary action emerald" id="submit">✓ ارسال برای بررسی</button><button class="glass action secondary" id="edit">✎ اصلاح اطلاعات</button></section>
+<section id="success" class="screen success" hidden><div class="success-mark">✓</div><span class="eyebrow">یک قدم تا معاملهٔ بعدی</span><h1>آگهی‌ات ارسال شد!</h1><p id="success-message"></p><div class="glass panel"><span class="dot"></span> در انتظار بررسی مدیر<p>بعد از تأیید، آگهی در بازارچه نشر می‌شود.</p></div><button class="glass primary action" id="success-ads">دیدن آگهی‌های من</button><button class="text-button home-button">بازگشت به خانه</button></section>
+<section id="ads" class="screen" hidden><div class="section-heading"><button class="round back" aria-label="بازگشت">→</button><div><h2>آگهی‌های من</h2><p>همهٔ آگهی‌ها، در یک نگاه</p></div></div><div id="ads-list"></div></section>
+<section id="guide" class="screen" hidden><div class="section-heading"><button class="round back" aria-label="بازگشت">→</button><div><h2>ساده و روشن</h2><p>راهنمای بازارچه</p></div></div><div class="glass panel guide"><h3>۱. اطلاعات و عکس</h3><p>جنس یا درخواستت را توضیح بده. عکس واقعی و روشن انتخاب کن.</p><h3>۲. تکمیل و بازبینی</h3><p>قیمت، شهر و راه تماس را بررسی کن. هیچ اطلاعاتی بدون تأییدت نشر نمی‌شود.</p><h3>۳. بررسی مدیر</h3><p>آگهی برای مدیر فرستاده می‌شود. تأیید مدیر به معنی تضمین معامله یا فروشنده نیست.</p><h3>قوانین بازارچه</h3><p id="rules"></p></div></section>
+</main><footer><span class="footer-symbol">ب</span> بازارچه <span>·</span> فرصت‌های نزدیک‌تر</footer>
+</div><div id="toast" role="status" aria-live="polite" hidden></div><div id="loading" hidden role="status"><span class="spinner"></span><b>یک لحظه…</b></div>
+</body></html>

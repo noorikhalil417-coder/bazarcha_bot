@@ -205,14 +205,21 @@ async def _error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> 
 
 
 async def _post_init(application: Application) -> None:
+    from services.miniapp import start_server
+    await start_server(application)
     if application.job_queue:
         application.job_queue.run_repeating(_scheduled_tasks, interval=3600, first=30, name="marketplace-maintenance")
+
+
+async def _post_shutdown(application: Application) -> None:
+    from services.miniapp import stop_server
+    await stop_server(application)
 
 
 def build_application(config: Config, database: Database | None = None) -> Application:
     db = database or Database(config.database_path)
     db.initialize()
-    application = Application.builder().token(config.token).post_init(_post_init).build()
+    application = Application.builder().token(config.token).post_init(_post_init).post_shutdown(_post_shutdown).build()
     application.bot_data["config"] = config
     application.bot_data["database"] = db
     application.bot_data["marketplace"] = Marketplace(db, config.max_active_ads_per_user, config.default_ad_expiry_days)
