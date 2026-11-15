@@ -5,6 +5,8 @@ from __future__ import annotations
 import html
 import re
 
+from content import SUPPORT_URL, CHARKHAK_URL
+
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update, WebAppInfo
 from telegram.ext import (
     CallbackQueryHandler,
@@ -48,11 +50,11 @@ def _ad_status_label(ad) -> str:
 def _main_menu(context=None, update=None) -> tuple[str, InlineKeyboardMarkup]:
     text = "به بازارچه خوش آمدید! از گزینه‌های زیر انتخاب کنید:"
     buttons = [
-        [InlineKeyboardButton("📝 ثبت آگهی جدید", callback_data="newad"),
-         InlineKeyboardButton("🔎 جست‌وجوی آگهی‌ها", callback_data="menu:search")],
+        [InlineKeyboardButton("🔎 جست‌وجوی آگهی‌ها", callback_data="menu:search")],
         [InlineKeyboardButton("📂 دسته‌بندی آگهی‌ها", callback_data="menu:categories"),
          InlineKeyboardButton("📋 قوانین بازارچه", callback_data="menu:rules")],
-        [InlineKeyboardButton("💬 کمک و راهنمایی", callback_data="menu:help")],
+        [InlineKeyboardButton("💬 کمک و همکاری", callback_data="menu:help")],
+        [InlineKeyboardButton("🎡 بازی چرخک", url=CHARKHAK_URL)],
     ]
     if context and update and getattr(getattr(update, "effective_chat", None), "type", None) == "private":
         url = context.application.bot_data["config"].mini_app_url
@@ -77,20 +79,43 @@ async def _prompt(update: Update, text: str, markup: InlineKeyboardMarkup | None
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     _touch(update, context)
+    if getattr(context, "args", None) == ["invite"]:
+        from handlers.group_gate import invite_status
+        await invite_status(update, context)
+        return
     text, keyboard = _main_menu(context, update)
     await update.effective_message.reply_text(text, reply_markup=keyboard)
 
 
+def help_keyboard():
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("💬 ارتباط با خلیل نوری", url=SUPPORT_URL)],
+        [InlineKeyboardButton("👥 دعوت دوستان و وضعیت من", callback_data="group:invites")],
+        [InlineKeyboardButton("ثبت آگهی بدون مینی‌اپ", callback_data="newad")],
+        [InlineKeyboardButton("🏠 منوی اصلی", callback_data="menu:home")],
+    ])
+
+
+def effective_rules(context):
+    config = context.application.bot_data["config"]
+    text = _market(context).get_setting("rules", config.group_rules)
+    group_policy = context.application.bot_data.get("group_policy")
+    if group_policy and config.group_id:
+        settings = group_policy.settings(config.group_id)
+        if settings["invite_required"]:
+            text += f"\n\n👥 برای گفت‌وگو در گروه، {settings['required_invites']} دعوت متفاوت از لینک اختصاصی لازم است. در بخش کمک، «دعوت دوستان» را بزنید."
+    return text
+
+
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.effective_message.reply_text(
-        "از دکمه‌های منوی اصلی برای ثبت و جست‌وجوی آگهی استفاده کنید. "
-        "برای دیدن آگهی‌های خود، رتبه‌بندی یا لغو روند جاری نیز فرمان‌های /myads، /rankings و /cancel در دسترس‌اند.",
-        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🏠 منوی اصلی", callback_data="menu:home")]]),
+        "💬 کمک و همکاری\nبرای پشتیبانی یا همکاری، با خلیل نوری تماس بگیرید.\nثبت آگهی از مینی‌اپ انجام می‌شود؛ اگر باز نشد، روش جایگزین را انتخاب کنید.",
+        reply_markup=help_keyboard(),
     )
 
 
 async def rules(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    text = _market(context).get_setting("rules", context.application.bot_data["config"].group_rules)
+    text = effective_rules(context)
     await update.effective_message.reply_text(
         "📋 مقررات بازارچه:\n" + text,
         reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🏠 منوی اصلی", callback_data="menu:home")]]),
@@ -114,6 +139,14 @@ async def rankings(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 async def _begin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     if update.callback_query:
         await update.callback_query.answer()
+    chat = getattr(update, "effective_chat", None)
+    if chat and chat.type != "private":
+        bot = await context.bot.get_me()
+        await update.effective_message.reply_text(
+            "برای ثبت آگهی، مینی‌اپ را در چت خصوصی باز کن.",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🛍 ورود به بازارچه", url=f"https://t.me/{bot.username}?start=menu")]]),
+        )
+        return ConversationHandler.END
     _touch(update, context)
     draft = _current_draft(update, context)
     if draft:
@@ -631,16 +664,15 @@ async def navigation(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         text, keyboard = _main_menu(context, update)
         await query.edit_message_text(text, reply_markup=keyboard)
     elif query.data == "menu:rules":
-        text = _market(context).get_setting("rules", context.application.bot_data["config"].group_rules)
+        text = effective_rules(context)
         await query.edit_message_text(
             "📋 مقررات بازارچه:\n" + text,
             reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🏠 منوی اصلی", callback_data="menu:home")]]),
         )
     elif query.data == "menu:help":
         await query.edit_message_text(
-            "برای ثبت آگهی، دسته را انتخاب کنید و گام‌ها را دنبال نمایید. "
-            "جست‌وجو و دسته‌بندی از همین منو در دسترس است. راه تماس در آگهی به‌صورت عمومی نشر می‌شود.",
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🏠 منوی اصلی", callback_data="menu:home")]]),
+            "💬 کمک و همکاری\nبرای پشتیبانی یا همکاری با خلیل نوری تماس بگیرید.\nبرای فعالیت در گروه، وضعیت دعوت‌ها را از دکمهٔ زیر ببینید.",
+            reply_markup=help_keyboard(),
         )
     elif query.data == "menu:categories":
         buttons = [[InlineKeyboardButton(row["name"], callback_data=f"browse:{row['category_id']}")] for row in _market(context).categories()]

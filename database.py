@@ -8,7 +8,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 DEFAULT_CATEGORIES = (
     "موبایل و تکنالوژی", "موتر و وسایط", "خانه و جایداد", "لباس و لوازم شخصی",
     "لوازم خانه", "خدمات", "کار و استخدام", "حیوانات و محصولات زراعتی", "سایر موارد",
@@ -99,6 +99,13 @@ class Database:
                     connection.execute("CREATE TABLE IF NOT EXISTS miniapp_favorites (user_id INTEGER NOT NULL REFERENCES users(user_id) ON DELETE CASCADE, ad_id INTEGER NOT NULL REFERENCES ads(ad_id) ON DELETE CASCADE, PRIMARY KEY(user_id,ad_id))")
                     connection.execute("CREATE TABLE IF NOT EXISTS miniapp_profiles (user_id INTEGER PRIMARY KEY REFERENCES users(user_id) ON DELETE CASCADE, city TEXT NOT NULL DEFAULT '', notifications_read_at TEXT NOT NULL DEFAULT '1970-01-01T00:00:00Z')")
                     connection.execute("PRAGMA user_version = 5")
+                    connection.commit()
+                    version = 5
+                if version < 6:
+                    from content import DEFAULT_RULES
+                    connection.executescript("BEGIN IMMEDIATE;\n" + _SCHEMA_V6)
+                    connection.execute("UPDATE settings SET value=? WHERE key='rules' AND value=?", (DEFAULT_RULES, 'با احترام رفتار کنید. آگهی نادرست، تکراری و محتوای خلاف قانون مجاز نیست.'))
+                    connection.execute("PRAGMA user_version = 6")
                     connection.commit()
             finally:
                 connection.close()
@@ -248,5 +255,42 @@ CREATE TABLE ad_publication_messages (
     message_id INTEGER NOT NULL,
     sort_order INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY(ad_id, message_id)
+);
+"""
+
+
+_SCHEMA_V6 = """
+CREATE TABLE IF NOT EXISTS group_policies (
+ chat_id INTEGER PRIMARY KEY,
+ invite_required INTEGER NOT NULL DEFAULT 0 CHECK(invite_required IN (0,1)),
+ ad_delete INTEGER NOT NULL DEFAULT 0 CHECK(ad_delete IN (0,1)),
+ required_invites INTEGER NOT NULL DEFAULT 3 CHECK(required_invites BETWEEN 1 AND 20)
+);
+CREATE TABLE IF NOT EXISTS group_invite_links (
+ chat_id INTEGER NOT NULL, owner_id INTEGER NOT NULL, invite_link TEXT NOT NULL UNIQUE,
+ created_at INTEGER NOT NULL DEFAULT (unixepoch()), PRIMARY KEY(chat_id,owner_id)
+);
+CREATE TABLE IF NOT EXISTS group_members_seen (
+ chat_id INTEGER NOT NULL, user_id INTEGER NOT NULL,
+ first_seen_at INTEGER NOT NULL DEFAULT (unixepoch()), PRIMARY KEY(chat_id,user_id)
+);
+CREATE TABLE IF NOT EXISTS group_referrals (
+ chat_id INTEGER NOT NULL, invitee_id INTEGER NOT NULL, inviter_id INTEGER NOT NULL,
+ created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+ PRIMARY KEY(chat_id,invitee_id), CHECK(invitee_id!=inviter_id)
+);
+CREATE INDEX IF NOT EXISTS group_referrals_owner ON group_referrals(chat_id,inviter_id);
+CREATE TABLE IF NOT EXISTS group_pending_joins (
+ chat_id INTEGER NOT NULL, user_id INTEGER NOT NULL, invite_link TEXT NOT NULL,
+ requested_at INTEGER NOT NULL, PRIMARY KEY(chat_id,user_id)
+);
+CREATE TABLE IF NOT EXISTS group_gate_notices (
+ chat_id INTEGER NOT NULL, user_id INTEGER NOT NULL, last_notice_at INTEGER NOT NULL,
+ PRIMARY KEY(chat_id,user_id)
+);
+CREATE TABLE IF NOT EXISTS group_gate_actions (
+ chat_id INTEGER NOT NULL, message_id INTEGER NOT NULL, user_id INTEGER NOT NULL, reason TEXT NOT NULL,
+ created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+ PRIMARY KEY(chat_id,message_id)
 );
 """
