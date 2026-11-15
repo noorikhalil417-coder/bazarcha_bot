@@ -426,7 +426,8 @@ class AuthorizationAndBackupTests(ProjectTestCase):
         asyncio.run(start(SimpleNamespace(effective_user=user, effective_message=SimpleNamespace(reply_text=reply)), context))
         keyboard = reply.await_args.kwargs["reply_markup"]
         labels = [button.text for row in keyboard.inline_keyboard for button in row]
-        self.assertIn("📝 ثبت آگهی جدید", labels)
+        self.assertNotIn("📝 ثبت آگهی جدید", labels)
+        self.assertIn("🎡 بازی چرخک", labels)
         self.assertIn("🔎 جست‌وجوی آگهی‌ها", labels)
         self.assertIn("📂 دسته‌بندی آگهی‌ها", labels)
 

@@ -29,7 +29,7 @@ SECTIONS = (
     ("stats", "آمار عمومی"), ("ads", "بررسی آگهی‌ها"), ("users", "مدیریت کاربران"),
     ("reports", "گزارش تخلفات"), ("categories", "دسته‌بندی‌ها"), ("rules", "قوانین گروه"),
     ("antispam", "تنظیمات ضداسپم"), ("publication", "تنظیمات نشر آگهی"),
-    ("group", "تنظیمات گروه"), ("group_review", "پیام‌های مشکوک"),
+    ("group", "تنظیمات گروه"), ("group_gate", "دعوت و حذف آگهی گروه"), ("group_review", "پیام‌های مشکوک"),
     ("history", "سابقهٔ مدیریت"), ("featured", "آگهی‌های ویژه"), ("reputation", "امتیاز کاربران"),
     ("backup", "پشتیبان‌گیری"), ("health", "وضعیت ربات"), ("guide", "راهنمای مدیر"),
 )
@@ -141,6 +141,10 @@ async def _dashboard_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
             f"\nبررسی درخواست عضویت: {'با تأیید مدیر' if _market(context).get_setting('join_approval', '0') == '1' else 'خودکار'}"
             "\nبرای صف درخواست، گروه باید لینک عضویتِ نیازمند تأیید داشته باشد و ربات اجازهٔ مدیریت پیوندها را بگیرد."
         )
+    elif section == "group_gate":
+        from handlers.group_gate import render_panel
+        await render_panel(query, context)
+        return
     elif section == "group_review":
         rows = _market(context).pending_group_reviews()
         text += "\nپیام‌هایی که به‌صورت احتمالی شبیه آگهی‌اند؛ پیام اصلی دست‌نخورده می‌ماند:"
@@ -235,6 +239,10 @@ async def _dashboard_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
             InlineKeyboardButton("روشن/خاموش خوش‌آمدگویی", callback_data="setting:welcome_enabled"),
             InlineKeyboardButton("تغییر تأیید عضویت", callback_data="setting:join_approval"),
         ]]
+    elif section == "group_gate":
+        from handlers.group_gate import render_panel
+        await render_panel(query, context)
+        return
     elif section == "group_review":
         buttons = []
         for row in rows:

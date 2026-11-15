@@ -26,6 +26,7 @@ from handlers.user import user_handlers
 from services.backup import create_backup, prune_backups
 from services.marketplace import Marketplace
 from services.moderation import Moderation
+from services.group_policy import GroupPolicy
 
 logger = logging.getLogger(__name__)
 
@@ -92,12 +93,20 @@ async def _moderate_message(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     chat = update.effective_chat
     if not message or not user or not chat:
         return
+    if getattr(user, "is_bot", False) or getattr(message, "sender_chat", None):
+        return
     text = message.text or message.caption or ""
     if not text:
         return
     config: Config = context.application.bot_data["config"]
     if config.group_id is not None and chat.id != config.group_id:
         return
+    if user.id in config.admin_ids:
+        return
+    if context.application.bot_data.get("group_policy"):
+        from handlers.group_gate import is_exempt
+        if await is_exempt(context, chat.id, user.id) is not False:
+            return
     market: Marketplace = context.application.bot_data["marketplace"]
     market.ensure_user(user.id, user.username, user.full_name)
     with context.application.bot_data["database"].connect() as conn:
@@ -133,6 +142,9 @@ async def _handle_join_request(update: Update, context: ContextTypes.DEFAULT_TYP
         return
     market: Marketplace = context.application.bot_data["marketplace"]
     market.ensure_user(request.from_user.id, request.from_user.username, request.from_user.full_name)
+    p = context.application.bot_data.get("group_policy")
+    if p and config.group_id == request.chat.id and request.invite_link and not request.from_user.is_bot:
+        p.pending_join(request.chat.id, request.from_user.id, request.invite_link.invite_link)
     if market.get_setting("join_approval", "0") != "1":
         try:
             await context.bot.approve_chat_join_request(request.chat.id, request.from_user.id)
@@ -187,6 +199,8 @@ async def _scheduled_tasks(context: ContextTypes.DEFAULT_TYPE) -> None:
     if cleanup_claimed:
         try:
             await asyncio.to_thread(market.cleanup_temporary_state, config.cleanup_retention_days)
+            if context.application.bot_data.get("group_policy"):
+                await asyncio.to_thread(context.application.bot_data["group_policy"].prune_logs)
             await asyncio.to_thread(prune_backups, config.backup_directory, config.backup_retention_days)
             await asyncio.to_thread(market.finish_scheduled_job, "temporary_cleanup", True)
         except (OSError, ValueError, sqlite3.Error) as exc:
@@ -224,7 +238,13 @@ def build_application(config: Config, database: Database | None = None) -> Appli
     application.bot_data["database"] = db
     application.bot_data["marketplace"] = Marketplace(db, config.max_active_ads_per_user, config.default_ad_expiry_days)
     application.bot_data["moderation"] = Moderation(db)
+    application.bot_data["group_policy"] = GroupPolicy(db)
     application.bot_data["publish_ad"] = _publish_ad
+    application.bot_data["notify_group_review"] = _notify_group_review
+    from handlers.group_gate import install_prehandlers, handlers as group_handlers
+    install_prehandlers(application)
+    for handler in group_handlers():
+        application.add_handler(handler)
     for handler in user_handlers() + admin_handlers():
         application.add_handler(handler)
     application.add_handler(ChatMemberHandler(_welcome, ChatMemberHandler.CHAT_MEMBER))

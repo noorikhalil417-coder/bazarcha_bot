@@ -142,5 +142,5 @@ class MarketplaceWebTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.market.photos(ad_id),before)
         self.assertEqual(self.market.get_ad(ad_id)['status'],'published')
         with self.db.connect() as conn:
-            self.assertEqual(conn.execute('PRAGMA user_version').fetchone()[0],5)
+            self.assertEqual(conn.execute('PRAGMA user_version').fetchone()[0],6)
             self.assertEqual(conn.execute('PRAGMA integrity_check').fetchone()[0],'ok')
