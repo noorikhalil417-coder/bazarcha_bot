@@ -157,7 +157,7 @@ def create_web_app(application) -> web.Application:
 
     async def state(request):
         user = request["user"]
-        return web.json_response({"user": {"name": user.get("first_name", "دوست عزیز"), "username": user.get("username", "")}, "categories": [dict(row) for row in market.categories()], "draft": draft_payload(market.draft_for_user(user["id"])), "ads": [dict(row) for row in market.user_ads(user["id"])], "rules": market.get_setting("rules", config.group_rules)})
+        return web.json_response({"user": {"name": user.get("first_name", "دوست عزیز"), "username": user.get("username", "")}, "categories": [dict(row) for row in market.categories()], "draft": draft_payload(market.draft_for_user(user["id"])), "ads": application.bot_data["miniapp_cards"](user["id"]), "profile": application.bot_data["miniapp_profile"](user["id"]), "rules": market.get_setting("rules", config.group_rules)})
 
     async def extract(request):
         body = await request.json()
@@ -220,7 +220,7 @@ def create_web_app(application) -> web.Application:
                 file_id = "miniapp:" + uuid.uuid4().hex
                 conn.execute("INSERT INTO miniapp_media VALUES(?,?,?)", (file_id, ad_id, content))
                 conn.execute("INSERT INTO ad_photos VALUES(?,?,?)", (ad_id, file_id, count))
-                conn.execute("UPDATE ads SET miniapp_revision=miniapp_revision+1 WHERE ad_id=?", (ad_id,))
+                conn.execute("UPDATE ads SET miniapp_revision=miniapp_revision+1,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE ad_id=?", (ad_id,))
         return web.json_response(draft_payload(market.owned_ad(ad_id, owner_id)))
 
     async def media(request):
@@ -239,7 +239,7 @@ def create_web_app(application) -> web.Application:
                     raise MarketplaceError("عکس در دسترس نیست.")
                 conn.execute("DELETE FROM ad_photos WHERE file_id=?", (body["file_id"],))
                 conn.execute("DELETE FROM miniapp_media WHERE file_id=?", (body["file_id"],))
-                conn.execute("UPDATE ads SET miniapp_revision=miniapp_revision+1 WHERE ad_id=?", (row[0],))
+                conn.execute("UPDATE ads SET miniapp_revision=miniapp_revision+1,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE ad_id=?", (row[0],))
         return web.json_response(draft_payload(market.owned_ad(row[0], request["user"]["id"])))
 
     async def submit(request):
@@ -271,13 +271,15 @@ def create_web_app(application) -> web.Application:
 
     async def static(request):
         name = request.match_info.get("name", "index.html")
-        if name not in {"index.html", "app.js", "style.css", "vazirmatn.woff2", "FONT-LICENSE.txt"}:
+        if name not in {"index.html", "app.js", "style.css", "vazirmatn.woff2", "FONT-LICENSE.txt", "logo.svg"}:
             raise web.HTTPNotFound()
         return web.FileResponse(WEB_ROOT / name)
 
     async def health(request):
         return web.json_response({"ok": True})
 
+    from services.marketplace_web import register_marketplace_routes
+    register_marketplace_routes(app, application)
     app.router.add_get("/health", health)
     app.router.add_get("/api/state", state)
     app.router.add_post("/api/extract", extract)

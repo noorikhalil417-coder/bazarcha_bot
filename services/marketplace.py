@@ -84,7 +84,7 @@ def format_public_ad(ad: dict[str, Any] | sqlite3.Row) -> str:
     return (
         f"{category_emoji(ad['category_name'])} {ad['title']}\n"
         f"📂 {ad['category_name']} | {kind}\n"
-        f"💰 قیمت: {format_price(ad)}\n\n"
+        f"💰 {'بودجه' if ad['ad_type'] == 'wanted' else 'قیمت'}: {format_price(ad)}\n\n"
         f"📝 توضیحات:\n{ad['description']}\n\n"
         f"📍 موقعیت: {ad['city']}\n"
         f"📞 راه تماس: {ad['contact']}\n"

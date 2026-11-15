@@ -14,6 +14,7 @@ from telegram import (
     InlineKeyboardButton,
     InlineKeyboardMarkup,
     InputMediaPhoto,
+    LinkPreviewOptions,
     Update,
 )
 from telegram.error import TelegramError
@@ -323,17 +324,24 @@ async def _publish_ad(context: ContextTypes.DEFAULT_TYPE, ad_id: int, admin_id: 
             messages = await context.bot.send_media_group(config.publication_chat_id, media)
             message_ids = [message.message_id for message in messages]
             market.record_publication_messages(ad_id, config.publication_chat_id, message_ids)
-            details_message = await context.bot.send_message(config.publication_chat_id, details, reply_markup=publication_buttons)
+            details_message = await context.bot.send_message(config.publication_chat_id, "<b>" + html.escape(details.split("\n", 1)[0]) + "</b>\n" + html.escape(details.partition("\n")[2]), reply_markup=publication_buttons, parse_mode="HTML", link_preview_options=LinkPreviewOptions(is_disabled=True))
             market.add_publication_message(ad_id, config.publication_chat_id, details_message.message_id)
             market.finish_album_publication(ad_id, config.publication_chat_id, [*message_ids, details_message.message_id])
+        elif photos and len(details.encode("utf-16-le")) // 2 <= 1024:
+            # A short single-photo ad is one message; long descriptions retain the safe split path.
+            first, _, remainder = details.partition("\n")
+            rich_caption = "<b>" + html.escape(first) + "</b>\n" + html.escape(remainder)
+            message = await context.bot.send_photo(config.publication_chat_id, photos[0], caption=rich_caption, parse_mode="HTML", reply_markup=publication_buttons)
+            market.record_publication_message(ad_id, message.message_id, config.publication_chat_id)
+            market.finish_publication(ad_id, message.message_id, config.publication_chat_id)
         elif photos:
             message = await context.bot.send_photo(config.publication_chat_id, photos[0], caption=caption)
             market.record_publication_message(ad_id, message.message_id, config.publication_chat_id)
-            details_message = await context.bot.send_message(config.publication_chat_id, details, reply_markup=publication_buttons)
+            details_message = await context.bot.send_message(config.publication_chat_id, "<b>" + html.escape(details.split("\n", 1)[0]) + "</b>\n" + html.escape(details.partition("\n")[2]), reply_markup=publication_buttons, parse_mode="HTML", link_preview_options=LinkPreviewOptions(is_disabled=True))
             market.add_publication_message(ad_id, config.publication_chat_id, details_message.message_id)
             market.finish_publication(ad_id, message.message_id, config.publication_chat_id)
         else:
-            message = await context.bot.send_message(config.publication_chat_id, details, reply_markup=publication_buttons)
+            message = await context.bot.send_message(config.publication_chat_id, "<b>" + html.escape(details.split("\n", 1)[0]) + "</b>\n" + html.escape(details.partition("\n")[2]), reply_markup=publication_buttons, parse_mode="HTML", link_preview_options=LinkPreviewOptions(is_disabled=True))
             market.finish_publication(ad_id, message.message_id, config.publication_chat_id)
         try:
             await context.bot.send_message(ad["owner_id"], f"آگهی {ad_id} در بازارچه نشر شد.")

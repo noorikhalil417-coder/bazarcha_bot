@@ -8,7 +8,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 DEFAULT_CATEGORIES = (
     "موبایل و تکنالوژی", "موتر و وسایط", "خانه و جایداد", "لباس و لوازم شخصی",
     "لوازم خانه", "خدمات", "کار و استخدام", "حیوانات و محصولات زراعتی", "سایر موارد",
@@ -92,6 +92,13 @@ class Database:
                     connection.execute("ALTER TABLE ads ADD COLUMN miniapp_revision INTEGER NOT NULL DEFAULT 0")
                     connection.execute("CREATE TABLE miniapp_media (file_id TEXT PRIMARY KEY, ad_id INTEGER NOT NULL REFERENCES ads(ad_id) ON DELETE CASCADE, data BLOB NOT NULL CHECK(length(data)<=2097152))")
                     connection.execute("PRAGMA user_version = 4")
+                    connection.commit()
+                    version = 4
+                if version < 5:
+                    connection.execute("BEGIN IMMEDIATE")
+                    connection.execute("CREATE TABLE IF NOT EXISTS miniapp_favorites (user_id INTEGER NOT NULL REFERENCES users(user_id) ON DELETE CASCADE, ad_id INTEGER NOT NULL REFERENCES ads(ad_id) ON DELETE CASCADE, PRIMARY KEY(user_id,ad_id))")
+                    connection.execute("CREATE TABLE IF NOT EXISTS miniapp_profiles (user_id INTEGER PRIMARY KEY REFERENCES users(user_id) ON DELETE CASCADE, city TEXT NOT NULL DEFAULT '', notifications_read_at TEXT NOT NULL DEFAULT '1970-01-01T00:00:00Z')")
+                    connection.execute("PRAGMA user_version = 5")
                     connection.commit()
             finally:
                 connection.close()

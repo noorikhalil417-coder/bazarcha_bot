@@ -710,7 +710,7 @@ class AuthorizationAndBackupTests(ProjectTestCase):
 
         from handlers.admin import _publish_ad
 
-        ad_id = self.make_draft()
+        ad_id = self.make_draft(description="تشریح دراز " * 160)
         self.market.add_photo(ad_id, 100, "telegram-file-id")
         self.market.submit(ad_id, 100)
         self.market.transition(ad_id, "approved", admin_id=41)
