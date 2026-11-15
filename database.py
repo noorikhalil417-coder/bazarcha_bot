@@ -8,7 +8,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
 
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
 DEFAULT_CATEGORIES = (
     "موبایل و تکنالوژی", "موتر و وسایط", "خانه و جایداد", "لباس و لوازم شخصی",
     "لوازم خانه", "خدمات", "کار و استخدام", "حیوانات و محصولات زراعتی", "سایر موارد",
@@ -106,6 +106,17 @@ class Database:
                     connection.executescript("BEGIN IMMEDIATE;\n" + _SCHEMA_V6)
                     connection.execute("UPDATE settings SET value=? WHERE key='rules' AND value=?", (DEFAULT_RULES, 'با احترام رفتار کنید. آگهی نادرست، تکراری و محتوای خلاف قانون مجاز نیست.'))
                     connection.execute("PRAGMA user_version = 6")
+                    connection.commit()
+                    version = 6
+                if version < 7:
+                    connection.execute("BEGIN IMMEDIATE")
+                    connection.execute(
+                        "CREATE TABLE IF NOT EXISTS private_panels (chat_id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL, message_id INTEGER NOT NULL, callbacks TEXT NOT NULL)"
+                    )
+                    connection.execute(
+                        "CREATE TABLE IF NOT EXISTS private_panel_messages (chat_id INTEGER NOT NULL, user_id INTEGER NOT NULL, message_id INTEGER NOT NULL, PRIMARY KEY(chat_id,message_id))"
+                    )
+                    connection.execute("PRAGMA user_version = 7")
                     connection.commit()
             finally:
                 connection.close()

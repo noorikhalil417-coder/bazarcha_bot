@@ -5,6 +5,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 from PIL import Image
+from database import SCHEMA_VERSION
 from services.backup import create_backup
 from services.marketplace import Marketplace
 import unittest
@@ -142,5 +143,5 @@ class MarketplaceWebTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.market.photos(ad_id),before)
         self.assertEqual(self.market.get_ad(ad_id)['status'],'published')
         with self.db.connect() as conn:
-            self.assertEqual(conn.execute('PRAGMA user_version').fetchone()[0],6)
+            self.assertEqual(conn.execute('PRAGMA user_version').fetchone()[0],SCHEMA_VERSION)
             self.assertEqual(conn.execute('PRAGMA integrity_check').fetchone()[0],'ok')
