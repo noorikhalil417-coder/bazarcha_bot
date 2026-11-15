@@ -131,6 +131,64 @@ class MarketplaceWebTests(unittest.IsolatedAsyncioTestCase):
         # Only owner confirmation is a separate text message; public ad is a single photo caption.
         self.assertEqual(self.bot.send_message.await_count,1)
 
+    async def test_wanted_preview_and_publication_keep_details_once(self):
+        from config import Config
+        from handlers.admin import _publish_ad
+
+        text = 'یک گوشی سامسونگ سالم با حافظه ۱۲۸ گیگ می‌خواهم؛ بودجه ۳۰۰۰ افغانی، کابل'
+        extracted = await self.client.post('/api/extract', json={'text': text, 'ad_type': 'wanted'}, headers=self.headers())
+        self.assertEqual((await extracted.json())['title'], 'خریدار گوشی سامسونگ')
+        response = await self.put({**self.body, 'title': text, 'description': text, 'ad_type': 'wanted', 'price': '۳۰۰۰ افغانی'})
+        draft = await response.json()
+        self.assertEqual(draft['public_title'], 'خریدار گوشی سامسونگ')
+        self.assertEqual(draft['description'], text)
+        self.assertEqual(draft['public_contact_button'], '💬 پیام به خریدار')
+        self.assertTrue(draft['public_hide_contact'])
+
+        self.market.submit(draft['ad_id'], 100)
+        self.market.transition(draft['ad_id'], 'approved', 41)
+        self.bot.send_message.return_value = SimpleNamespace(message_id=999)
+        config = Config.from_env({'TELEGRAM_BOT_TOKEN': '12345:test', 'ADMIN_IDS': '41', 'AD_PUBLICATION_CHAT_ID': '-1001234567890'})
+        context = SimpleNamespace(bot=self.bot, application=SimpleNamespace(bot_data={'marketplace': self.market, 'config': config}))
+        await _publish_ad(context, draft['ad_id'], 41)
+        sent = self.bot.send_message.await_args_list[0]
+        message = sent.args[1]
+        self.assertIn(draft['public_title'], message)
+        self.assertEqual(message.count(text), 1)
+        self.assertIn('💰 بودجه: ۳٬۰۰۰ افغانی', message)
+        self.assertIn('📍 موقعیت: کابل', message)
+        self.assertNotIn(draft['contact'], message)
+        button = sent.kwargs['reply_markup'].inline_keyboard[0][0]
+        self.assertEqual(button.text, draft['public_contact_button'])
+        self.assertEqual(button.url, draft['contact'])
+        self.assertEqual(self.market.get_ad(draft['ad_id'])['title'], text)
+        self.assertEqual(self.market.get_ad(draft['ad_id'])['description'], text)
+
+    async def test_sale_phone_remains_visible_and_contact_button_matches_preview(self):
+        from config import Config
+        from handlers.admin import _publish_ad
+
+        response = await self.put({**self.body, 'contact_mode': 'phone', 'contact': '+93700000000', 'price': '۲۰۰۰ افغانی با جورآمد'})
+        draft = await response.json()
+        self.assertFalse(draft['public_hide_contact'])
+        self.assertEqual(draft['public_contact_button'], '💬 پیام به فروشنده')
+        self.assertEqual(draft['public_price'], '۲٬۰۰۰ افغانی؛ قابل جورآمد')
+        self.assertEqual(draft['price'], '2000 با جورآمد')
+        response = await self.put({**self.body, 'ad_id': draft['ad_id'], 'miniapp_revision': draft['miniapp_revision'],
+                                   'contact_mode': 'phone', 'contact': draft['contact'], 'price': draft['price']})
+        draft = await response.json()
+        self.assertEqual(draft['public_price'], '۲٬۰۰۰ افغانی؛ قابل جورآمد')
+        self.market.submit(draft['ad_id'], 100)
+        self.market.transition(draft['ad_id'], 'approved', 41)
+        self.bot.send_message.return_value = SimpleNamespace(message_id=999)
+        config = Config.from_env({'TELEGRAM_BOT_TOKEN': '12345:test', 'ADMIN_IDS': '41', 'AD_PUBLICATION_CHAT_ID': '-1001234567890'})
+        context = SimpleNamespace(bot=self.bot, application=SimpleNamespace(bot_data={'marketplace': self.market, 'config': config}))
+        await _publish_ad(context, draft['ad_id'], 41)
+        sent = self.bot.send_message.await_args_list[0]
+        self.assertIn('💰 قیمت: ' + draft['public_price'], sent.args[1])
+        self.assertIn('📞 راه تماس: +93700000000', sent.args[1])
+        self.assertEqual(sent.kwargs['reply_markup'].inline_keyboard[0][0].text, draft['public_contact_button'])
+
     async def test_v4_to_v5_migration_keeps_real_photo_bytes_and_ads(self):
         ad_id=await self.publish_ad(with_photo=True)
         before=self.market.photos(ad_id)

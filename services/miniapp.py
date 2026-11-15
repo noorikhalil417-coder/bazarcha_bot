@@ -19,7 +19,7 @@ from urllib.parse import parse_qsl
 from aiohttp import web
 from PIL import Image, ImageOps, UnidentifiedImageError
 
-from services.marketplace import MarketplaceError, parse_price_input, validate_ad
+from services.marketplace import AD_TYPES, MarketplaceError, contact_button_label, format_price, parse_price_input, public_ad_title, public_contact_button, suggest_ad_title, validate_ad
 
 logger = logging.getLogger(__name__)
 WEB_ROOT = Path(__file__).resolve().parents[1] / "web"
@@ -49,10 +49,10 @@ def validate_init_data(raw: str, token: str, now: int | None = None) -> dict:
     return user
 
 
-def extract_fields(text: str, categories: list) -> dict:
+def extract_fields(text: str, categories: list, ad_type: str = "sale") -> dict:
     """Conservative text assistance; only explicit amounts/cities, editable category suggestion."""
     text = text.strip()[:3000]
-    result = {"description": text, "title": re.split(r"[،,\n]", text)[0].strip()[:120]}
+    result = {"description": text, "title": suggest_ad_title(text, ad_type)}
     amounts = re.findall(r"(?<![\w])([۰-۹٠-٩0-9]+(?:[٬,][۰-۹٠-٩0-9]{3})*(?:\s*هزار)?\s*(?:افغانی|AFN))", text, re.I)
     if len(amounts) == 1:
         try:
@@ -149,7 +149,13 @@ def create_web_app(application) -> web.Application:
         if not ad:
             return None
         data = {key: ad[key] for key in ("ad_id", "title", "description", "category_id", "ad_type", "city", "contact", "miniapp_revision", "status")}
-        data["price"] = str(ad["price_minor"]) if ad["price_minor"] is not None else ("توافقی" if ad["price_negotiable"] else "")
+        public_ad = market.get_ad(ad["ad_id"])
+        contact_url, hide_contact = public_contact_button(public_ad)
+        data["public_title"] = public_ad_title(public_ad)
+        data["public_contact_button"] = contact_button_label(ad["ad_type"]) if contact_url else None
+        data["public_hide_contact"] = hide_contact
+        data["price"] = (str(ad["price_minor"]) + (" با جورآمد" if ad["price_negotiable"] else "")) if ad["price_minor"] is not None else ("توافقی" if ad["price_negotiable"] else "")
+        data["public_price"] = format_price(ad) if ad["price_minor"] is not None or ad["price_negotiable"] else ""
         with market.db.connect() as conn:
             data["photos"] = [row[0] for row in conn.execute("SELECT file_id FROM miniapp_media WHERE ad_id=? ORDER BY rowid", (ad["ad_id"],))]
             data["legacy_photo_count"] = conn.execute("SELECT count(*) FROM ad_photos WHERE ad_id=? AND file_id NOT LIKE 'miniapp:%'", (ad["ad_id"],)).fetchone()[0]
@@ -163,7 +169,10 @@ def create_web_app(application) -> web.Application:
         body = await request.json()
         if not isinstance(body.get("text"), str):
             raise ValueError
-        return web.json_response(extract_fields(body["text"], market.categories()))
+        ad_type = body.get("ad_type", "sale")
+        if ad_type not in AD_TYPES:
+            raise MarketplaceError("نوع آگهی معتبر نیست.")
+        return web.json_response(extract_fields(body["text"], market.categories(), ad_type))
 
     async def save(request):
         body = await request.json()
