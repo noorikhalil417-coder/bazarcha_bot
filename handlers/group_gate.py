@@ -10,7 +10,7 @@ from collections import OrderedDict
 from types import SimpleNamespace
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.constants import ChatMemberStatus
-from telegram.error import TelegramError
+from telegram.error import BadRequest, TelegramError
 from telegram.ext import (
     ApplicationHandlerStop,
     CallbackQueryHandler,
@@ -21,6 +21,7 @@ from telegram.ext import (
 )
 
 from content import SUPPORT_URL
+from handlers.panel import render
 from services.group_policy import GroupPolicy, classify_group_ad
 
 logger = logging.getLogger(__name__)
@@ -289,14 +290,14 @@ async def invite_status(update: Update, context):
         await update.callback_query.answer()
     if not update.effective_chat or update.effective_chat.type != "private":
         if update.effective_message:
-            await update.effective_message.reply_text(
+            await render(update, context,
                 "برای دریافت لینک اختصاصی، /invites را در چت خصوصی ربات بفرست."
             )
         return
     config = context.application.bot_data["config"]
     user = update.effective_user
     if config.group_id is None:
-        await update.effective_message.reply_text(
+        await render(update, context,
             "گروه بازارچه هنوز توسط مدیر تنظیم نشده است."
         )
         return
@@ -304,33 +305,34 @@ async def invite_status(update: Update, context):
     settings = p.settings(config.group_id)
     try:
         member = await context.bot.get_chat_member(config.group_id, user.id)
-        if not member_present(member):
-            await update.effective_message.reply_text(
-                "ابتدا عضو گروه بازارچه شو؛ سپس لینک دعوت اختصاصی دریافت کن."
-            )
-            return
-        async with context.application.bot_data.setdefault(
-            "invite_link_lock", asyncio.Lock()
-        ):
-            link = p.link(config.group_id, user.id)
-            if not link:
-                created = await context.bot.create_chat_invite_link(
-                    config.group_id,
-                    name=f"bazarcha-{user.id}",
-                    creates_join_request=context.application.bot_data[
-                        "marketplace"
-                    ].get_setting("join_approval", "0")
-                    == "1",
-                )
-                link = created.invite_link
-                p.save_link(config.group_id, user.id, link)
+        if member_present(member):
+            async with context.application.bot_data.setdefault(
+                "invite_link_lock", asyncio.Lock()
+            ):
+                link = p.link(config.group_id, user.id)
+                if not link:
+                    created = await context.bot.create_chat_invite_link(
+                        config.group_id,
+                        name=f"bazarcha-{user.id}",
+                        creates_join_request=context.application.bot_data[
+                            "marketplace"
+                        ].get_setting("join_approval", "0")
+                        == "1",
+                    )
+                    link = created.invite_link
+                    p.save_link(config.group_id, user.id, link)
     except TelegramError as exc:
         logger.info("Invitation link unavailable: %s", type(exc).__name__)
-        await update.effective_message.reply_text(
+        await render(update, context,
             "لینک دعوت فعلاً در دسترس نیست؛ مدیر باید دسترسی دعوت اعضا را بررسی کند.",
             reply_markup=InlineKeyboardMarkup(
                 [[InlineKeyboardButton("💬 پشتیبانی", url=SUPPORT_URL)]]
             ),
+        )
+        return
+    if not member_present(member):
+        await render(update, context,
+            "ابتدا عضو گروه بازارچه شو؛ سپس لینک دعوت اختصاصی دریافت کن."
         )
         return
     count = p.count(config.group_id, user.id)
@@ -344,7 +346,7 @@ async def invite_status(update: Update, context):
     if not settings["invite_required"]:
         text += "\nℹ️ شرط دعوت برای گفت‌وگو فعلاً خاموش است."
     text += "\nورود تکراری امتیاز تازه ندارد. دعوت‌های پیش از فعال‌شدن این سیستم قابل بازیابی نیستند."
-    await update.effective_message.reply_text(
+    await render(update, context,
         text,
         reply_markup=InlineKeyboardMarkup(
             [
@@ -401,10 +403,14 @@ def panel_keyboard(context):
     )
 
 
-async def render_panel(query, context):
-    await query.edit_message_text(
-        panel_text(context), reply_markup=panel_keyboard(context)
-    )
+async def render_panel(update, context):
+    try:
+        await render(update, context,
+            panel_text(context), reply_markup=panel_keyboard(context)
+        )
+    except BadRequest as exc:
+        if not str(exc).casefold().startswith("message is not modified"):
+            raise
 
 
 async def admin_gate_callback(update: Update, context):
@@ -413,27 +419,30 @@ async def admin_gate_callback(update: Update, context):
     if query.from_user.id not in config.admin_ids:
         await query.answer("فقط مدیر ربات اجازهٔ تغییر دارد.", show_alert=True)
         return
-    await query.answer()
     if not config.group_id:
-        await query.edit_message_text("ابتدا GROUP_ID را برای گروه بازارچه تنظیم کنید.")
+        await query.answer()
+        await render(update, context, "ابتدا GROUP_ID را برای گروه بازارچه تنظیم کنید.")
         return
     if query.data != "gate:panel":
         _, field, mode = query.data.split(":")
         if field not in {"invite_required", "ad_delete"} or mode not in {"on", "off"}:
+            await query.answer()
             return
         if mode == "on" and not await required_permissions(
             context,
             include_invites=field == "invite_required"
             or bool(policy(context).settings(config.group_id)["invite_required"]),
         ):
-            await query.message.reply_text(
-                "فعال نشد. ربات باید در گروه مدیر باشد و اجازهٔ حذف پیام داشته باشد؛ برای شرط دعوت اجازهٔ دعوت اعضا هم لازم است."
+            await query.answer(
+                "فعال نشد. ربات باید در گروه مدیر باشد و اجازهٔ حذف پیام داشته باشد؛ برای شرط دعوت اجازهٔ دعوت اعضا هم لازم است.",
+                show_alert=True,
             )
             return
         policy(context).set_enabled(
             config.group_id, field, mode == "on", query.from_user.id
         )
-    await render_panel(query, context)
+    await query.answer()
+    await render_panel(update, context)
 
 
 def handlers():

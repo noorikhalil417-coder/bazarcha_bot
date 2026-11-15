@@ -12,6 +12,7 @@ from telegram.constants import ChatMemberStatus
 from telegram.error import TelegramError
 from telegram.ext import (
     Application,
+    CallbackQueryHandler,
     ChatJoinRequestHandler,
     ChatMemberHandler,
     ContextTypes,
@@ -22,6 +23,7 @@ from telegram.ext import (
 from config import Config
 from database import Database
 from handlers.admin import _group_message_url, _publish_ad, admin_handlers
+from handlers.panel import reject_stale_panel_callback
 from handlers.user import user_handlers
 from services.backup import create_backup, prune_backups
 from services.marketplace import Marketplace
@@ -233,7 +235,7 @@ async def _post_shutdown(application: Application) -> None:
 def build_application(config: Config, database: Database | None = None) -> Application:
     db = database or Database(config.database_path)
     db.initialize()
-    application = Application.builder().token(config.token).post_init(_post_init).post_shutdown(_post_shutdown).build()
+    application = Application.builder().token(config.token).concurrent_updates(False).post_init(_post_init).post_shutdown(_post_shutdown).build()
     application.bot_data["config"] = config
     application.bot_data["database"] = db
     application.bot_data["marketplace"] = Marketplace(db, config.max_active_ads_per_user, config.default_ad_expiry_days)
@@ -241,6 +243,7 @@ def build_application(config: Config, database: Database | None = None) -> Appli
     application.bot_data["group_policy"] = GroupPolicy(db)
     application.bot_data["publish_ad"] = _publish_ad
     application.bot_data["notify_group_review"] = _notify_group_review
+    application.add_handler(CallbackQueryHandler(reject_stale_panel_callback), group=-3)
     from handlers.group_gate import install_prehandlers, handlers as group_handlers
     install_prehandlers(application)
     for handler in group_handlers():

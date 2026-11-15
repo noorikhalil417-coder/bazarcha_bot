@@ -6,6 +6,7 @@ import html
 import re
 
 from content import SUPPORT_URL, CHARKHAK_URL
+from handlers.panel import render
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update, WebAppInfo
 from telegram.ext import (
@@ -53,6 +54,7 @@ def _main_menu(context=None, update=None) -> tuple[str, InlineKeyboardMarkup]:
         [InlineKeyboardButton("🔎 جست‌وجوی آگهی‌ها", callback_data="menu:search")],
         [InlineKeyboardButton("📂 دسته‌بندی آگهی‌ها", callback_data="menu:categories"),
          InlineKeyboardButton("📋 قوانین بازارچه", callback_data="menu:rules")],
+        [InlineKeyboardButton("📋 آگهی‌های من", callback_data="own:list:0")],
         [InlineKeyboardButton("💬 کمک و همکاری", callback_data="menu:help")],
         [InlineKeyboardButton("🎡 بازی چرخک", url=CHARKHAK_URL)],
     ]
@@ -70,11 +72,8 @@ def _wizard_buttons(back_to: str) -> InlineKeyboardMarkup:
     ]])
 
 
-async def _prompt(update: Update, text: str, markup: InlineKeyboardMarkup | None = None) -> None:
-    if update.callback_query:
-        await update.callback_query.edit_message_text(text, reply_markup=markup)
-    else:
-        await update.effective_message.reply_text(text, reply_markup=markup)
+async def _prompt(update: Update, context, text: str, markup: InlineKeyboardMarkup | None = None) -> None:
+    await render(update, context, text, reply_markup=markup)
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -84,7 +83,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await invite_status(update, context)
         return
     text, keyboard = _main_menu(context, update)
-    await update.effective_message.reply_text(text, reply_markup=keyboard)
+    await render(update, context, text, reply_markup=keyboard)
 
 
 def help_keyboard():
@@ -108,7 +107,7 @@ def effective_rules(context):
 
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    await update.effective_message.reply_text(
+    await render(update, context,
         "💬 کمک و همکاری\nبرای پشتیبانی یا همکاری، با خلیل نوری تماس بگیرید.\nثبت آگهی از مینی‌اپ انجام می‌شود؛ اگر باز نشد، روش جایگزین را انتخاب کنید.",
         reply_markup=help_keyboard(),
     )
@@ -116,7 +115,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
 async def rules(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     text = effective_rules(context)
-    await update.effective_message.reply_text(
+    await render(update, context,
         "📋 مقررات بازارچه:\n" + text,
         reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🏠 منوی اصلی", callback_data="menu:home")]]),
     )
@@ -125,15 +124,15 @@ async def rules(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 async def rankings(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     market = _market(context)
     if market.get_setting("public_rankings", "1") != "1":
-        await update.effective_message.reply_text("نمایش همگانی رتبه‌بندی از سوی مدیران خاموش شده است.")
+        await render(update, context, "نمایش همگانی رتبه‌بندی از سوی مدیران خاموش شده است.")
         return
     rows = market.seller_rankings()
     if not rows:
-        await update.effective_message.reply_text("در هفت روز گذشته امتیاز تأییدشده‌ای برای رتبه‌بندی ثبت نشده است.")
+        await render(update, context, "در هفت روز گذشته امتیاز تأییدشده‌ای برای رتبه‌بندی ثبت نشده است.")
         return
     lines = ["فعالیت فروشندگان در هفت روز گذشته (امتیاز، گواه اعتماد نیست):"]
     lines.extend(f"{index}. {html.escape(row['display_name'] or row['username'] or 'فروشنده')} | {row['score']} امتیاز | {row['approved_ads']} آگهی تأییدشده" for index, row in enumerate(rows, 1))
-    await update.effective_message.reply_text("\n".join(lines), parse_mode="HTML")
+    await render(update, context, "\n".join(lines), parse_mode="HTML")
 
 
 async def _begin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -142,7 +141,7 @@ async def _begin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     chat = getattr(update, "effective_chat", None)
     if chat and chat.type != "private":
         bot = await context.bot.get_me()
-        await update.effective_message.reply_text(
+        await render(update, context,
             "برای ثبت آگهی، مینی‌اپ را در چت خصوصی باز کن.",
             reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🛍 ورود به بازارچه", url=f"https://t.me/{bot.username}?start=menu")]]),
         )
@@ -152,25 +151,25 @@ async def _begin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     if draft:
         context.user_data["draft_id"] = draft["ad_id"]
         if not draft["title"]:
-            await _prompt(update, "پیش‌نویس قبلی ادامه می‌یابد. عنوان آگهی را بنویسید؛ تا ۱۲۰ نویسه.", _wizard_buttons("type"))
+            await _prompt(update, context, "پیش‌نویس قبلی ادامه می‌یابد. عنوان آگهی را بنویسید؛ تا ۱۲۰ نویسه.", _wizard_buttons("type"))
             return TITLE
         if not draft["description"]:
-            await _prompt(update, "پیش‌نویس قبلی ادامه می‌یابد. تشریح آگهی را بنویسید؛ تا ۳۰۰۰ نویسه.", _wizard_buttons("title"))
+            await _prompt(update, context, "پیش‌نویس قبلی ادامه می‌یابد. تشریح آگهی را بنویسید؛ تا ۳۰۰۰ نویسه.", _wizard_buttons("title"))
             return DESCRIPTION
         if draft["price_minor"] is None and not draft["price_negotiable"]:
-            await _prompt(update, "پیش‌نویس قبلی ادامه می‌یابد. قیمت را به افغانی بنویسید؛ نمونه: «۳۰۰۰ افغانی»، «۳ هزار»، «با جورآمد» یا «توافقی».", _wizard_buttons("description"))
+            await _prompt(update, context, "پیش‌نویس قبلی ادامه می‌یابد. قیمت را به افغانی بنویسید؛ نمونه: «۳۰۰۰ افغانی»، «۳ هزار»، «با جورآمد» یا «توافقی».", _wizard_buttons("description"))
             return PRICE
         if not draft["city"]:
-            await _prompt(update, "پیش‌نویس قبلی ادامه می‌یابد. شهر یا محل را بنویسید.", _wizard_buttons("price"))
+            await _prompt(update, context, "پیش‌نویس قبلی ادامه می‌یابد. شهر یا محل را بنویسید.", _wizard_buttons("price"))
             return CITY
         if not draft["contact"]:
-            await _prompt(update, "پیش‌نویس قبلی ادامه می‌یابد. راه تماس را بنویسید.", _wizard_buttons("city"))
+            await _prompt(update, context, "پیش‌نویس قبلی ادامه می‌یابد. راه تماس را بنویسید.", _wizard_buttons("city"))
             return CONTACT
         return await _show_confirmation(update, context)
     categories = _market(context).categories()
     buttons = [[InlineKeyboardButton(f"{category_emoji(row['name'])} {row['name']}", callback_data=f"adcat:{row['category_id']}")] for row in categories]
     buttons.append([InlineKeyboardButton("لغو و بازگشت به منو", callback_data="ad:back:home")])
-    await _prompt(update, "دسته‌بندی آگهی را انتخاب کنید:", InlineKeyboardMarkup(buttons))
+    await _prompt(update, context, "دسته‌بندی آگهی را انتخاب کنید:", InlineKeyboardMarkup(buttons))
     return CATEGORY
 
 
@@ -180,11 +179,11 @@ async def _select_category(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     try:
         context.user_data["ad_category"] = int(query.data.split(":", 1)[1])
     except (ValueError, IndexError):
-        await query.edit_message_text("دسته‌بندی معتبر نیست. دوباره از منوی اصلی آغاز کنید.", reply_markup=_wizard_buttons("home"))
+        await render(update, context, "دسته‌بندی معتبر نیست. دوباره از منوی اصلی آغاز کنید.", reply_markup=_wizard_buttons("home"))
         return ConversationHandler.END
     buttons = [[InlineKeyboardButton(label, callback_data=f"adtype:{key}")] for key, label in TYPE_LABELS.items()]
     buttons.extend(_wizard_buttons("category").inline_keyboard)
-    await query.edit_message_text("نوع آگهی را انتخاب کنید:", reply_markup=InlineKeyboardMarkup(buttons))
+    await render(update, context, "نوع آگهی را انتخاب کنید:", reply_markup=InlineKeyboardMarkup(buttons))
     return AD_TYPE
 
 
@@ -193,15 +192,15 @@ async def _select_type(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
     await query.answer()
     kind = query.data.partition(":")[2]
     if kind not in TYPE_LABELS:
-        await query.edit_message_text("نوع آگهی معتبر نیست. دوباره آغاز کنید.", reply_markup=_wizard_buttons("category"))
+        await render(update, context, "نوع آگهی معتبر نیست. دوباره آغاز کنید.", reply_markup=_wizard_buttons("category"))
         return ConversationHandler.END
     try:
         ad_id = _market(context).create_draft(update.effective_user.id, context.user_data.pop("ad_category"), kind)
     except (MarketplaceError, KeyError) as exc:
-        await query.edit_message_text(str(exc) if isinstance(exc, MarketplaceError) else "روند ثبت آگهی را دوباره آغاز کنید.")
+        await render(update, context, str(exc) if isinstance(exc, MarketplaceError) else "روند ثبت آگهی را دوباره آغاز کنید.")
         return ConversationHandler.END
     context.user_data["draft_id"] = ad_id
-    await query.edit_message_text("عنوان آگهی را بنویسید؛ تا ۱۲۰ نویسه.", reply_markup=_wizard_buttons("type"))
+    await render(update, context, "عنوان آگهی را بنویسید؛ تا ۱۲۰ نویسه.", reply_markup=_wizard_buttons("type"))
     return TITLE
 
 
@@ -209,27 +208,27 @@ async def _save_text(update: Update, context: ContextTypes.DEFAULT_TYPE, field: 
     _touch(update, context)
     draft = _current_draft(update, context)
     if not draft:
-        await update.effective_message.reply_text("پیش‌نویس پیدا نشد. لطفاً از منوی اصلی دوباره آغاز کنید.")
+        await render(update, context, "پیش‌نویس پیدا نشد. لطفاً از منوی اصلی دوباره آغاز کنید.")
         return ConversationHandler.END
     try:
         _market(context).update_draft_field(draft["ad_id"], update.effective_user.id, field, update.effective_message.text)
     except MarketplaceError as exc:
-        await update.effective_message.reply_text(str(exc), reply_markup=_wizard_buttons(back_to))
+        await render(update, context, str(exc), reply_markup=_wizard_buttons(back_to))
         return {"title": TITLE, "description": DESCRIPTION, "city": CITY, "contact": CONTACT}[field]
-    await update.effective_message.reply_text(prompt, reply_markup=_wizard_buttons(back_to))
+    await render(update, context, prompt, reply_markup=_wizard_buttons(back_to))
     return next_state
 
 
 async def _title(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     if len(update.effective_message.text.strip()) > 120:
-        await update.effective_message.reply_text("عنوان باید حداکثر ۱۲۰ نویسه باشد. کوتاه‌تر بنویسید.", reply_markup=_wizard_buttons("type"))
+        await render(update, context, "عنوان باید حداکثر ۱۲۰ نویسه باشد. کوتاه‌تر بنویسید.", reply_markup=_wizard_buttons("type"))
         return TITLE
     return await _save_text(update, context, "title", DESCRIPTION, "تشریح آگهی را بنویسید؛ تا ۳۰۰۰ نویسه.", "title")
 
 
 async def _description(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     if len(update.effective_message.text.strip()) > 3000:
-        await update.effective_message.reply_text("تشریح باید حداکثر ۳۰۰۰ نویسه باشد.", reply_markup=_wizard_buttons("title"))
+        await render(update, context, "تشریح باید حداکثر ۳۰۰۰ نویسه باشد.", reply_markup=_wizard_buttons("title"))
         return DESCRIPTION
     return await _save_text(update, context, "description", PRICE, "قیمت را به افغانی بنویسید؛ نمونه: «۳۰۰۰ افغانی» یا «۳ هزار». برای جورآمد/توافقی همان عبارت را بنویسید.", "description")
 
@@ -237,17 +236,17 @@ async def _description(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
 async def _price(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     draft = _current_draft(update, context)
     if not draft:
-        await update.effective_message.reply_text("پیش‌نویس پیدا نشد. از منوی اصلی دوباره آغاز کنید.")
+        await render(update, context, "پیش‌نویس پیدا نشد. از منوی اصلی دوباره آغاز کنید.")
         return ConversationHandler.END
     value = update.effective_message.text.strip()
     try:
         amount, negotiable = parse_price_input(value)
     except MarketplaceError as exc:
-        await update.effective_message.reply_text(str(exc), reply_markup=_wizard_buttons("description"))
+        await render(update, context, str(exc), reply_markup=_wizard_buttons("description"))
         return PRICE
     _market(context).update_draft_field(draft["ad_id"], update.effective_user.id, "price_minor", amount)
     _market(context).update_draft_field(draft["ad_id"], update.effective_user.id, "price_negotiable", int(negotiable))
-    await update.effective_message.reply_text("شهر یا محل آگهی را بنویسید.", reply_markup=_wizard_buttons("price"))
+    await render(update, context, "شهر یا محل آگهی را بنویسید.", reply_markup=_wizard_buttons("price"))
     return CITY
 
 
@@ -259,23 +258,23 @@ async def _contact(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     result = await _save_text(update, context, "contact", PHOTOS, "عکس‌های آگهی را بفرستید (حداکثر ۱۰ عکس). اگر عکس ندارید، دکمهٔ «پایان عکس‌ها» را بزنید.", "contact")
     if result == PHOTOS:
         buttons = [[InlineKeyboardButton("پایان عکس‌ها", callback_data="photos-done")], *_wizard_buttons("contact").inline_keyboard]
-        await update.effective_message.reply_text("عکس‌ها اختیاری است.", reply_markup=InlineKeyboardMarkup(buttons))
+        await render(update, context, "عکس‌های آگهی اختیاری است؛ حداکثر ۱۰ عکس بفرستید یا «پایان عکس‌ها» را بزنید.", reply_markup=InlineKeyboardMarkup(buttons))
     return result
 
 
 async def _photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     draft = _current_draft(update, context)
     if not draft:
-        await update.effective_message.reply_text("پیش‌نویس پیدا نشد؛ از منوی اصلی دوباره آغاز کنید.")
+        await render(update, context, "پیش‌نویس پیدا نشد؛ از منوی اصلی دوباره آغاز کنید.")
         return ConversationHandler.END
     try:
         _market(context).add_photo(draft["ad_id"], update.effective_user.id, update.effective_message.photo[-1].file_id)
     except MarketplaceError as exc:
         buttons = [[InlineKeyboardButton("پایان عکس‌ها", callback_data="photos-done")], *_wizard_buttons("contact").inline_keyboard]
-        await update.effective_message.reply_text(str(exc), reply_markup=InlineKeyboardMarkup(buttons))
+        await render(update, context, str(exc), reply_markup=InlineKeyboardMarkup(buttons))
     else:
         buttons = [[InlineKeyboardButton("پایان عکس‌ها", callback_data="photos-done")], *_wizard_buttons("contact").inline_keyboard]
-        await update.effective_message.reply_text("عکس افزوده شد. عکس دیگر بفرستید یا «پایان عکس‌ها» را بزنید.", reply_markup=InlineKeyboardMarkup(buttons))
+        await render(update, context, "عکس افزوده شد. عکس دیگر بفرستید یا «پایان عکس‌ها» را بزنید.", reply_markup=InlineKeyboardMarkup(buttons))
     return PHOTOS
 
 
@@ -306,10 +305,7 @@ async def _show_confirmation(update: Update, context: ContextTypes.DEFAULT_TYPE,
             [InlineKeyboardButton("لغو", callback_data="ad:cancel"),
              InlineKeyboardButton("⬅️ بازگشت", callback_data="ad:back:photos")],
         ])
-    if query and update.callback_query:
-        await update.callback_query.edit_message_text(text, reply_markup=markup, parse_mode="HTML")
-    else:
-        await update.effective_message.reply_text(text, reply_markup=markup, parse_mode="HTML")
+    await render(update, context, text, reply_markup=markup, parse_mode="HTML")
     return CONFIRM if draft else ConversationHandler.END
 
 
@@ -324,10 +320,10 @@ async def _edit_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
         if ad["status"] != "draft":
             _market(context).reopen(ad_id, query.from_user.id)
     except (ValueError, MarketplaceError, IndexError) as exc:
-        await query.edit_message_text(str(exc) if isinstance(exc, MarketplaceError) else "این آگهی در دسترس شما نیست.")
+        await render(update, context, str(exc) if isinstance(exc, MarketplaceError) else "این آگهی در دسترس شما نیست.")
         return ConversationHandler.END
     context.user_data["edit_ad_id"] = ad_id
-    await query.edit_message_text("بخشی را که می‌خواهید اصلاح کنید انتخاب نمایید:", reply_markup=_edit_keyboard(ad_id))
+    await render(update, context, "بخشی را که می‌خواهید اصلاح کنید انتخاب نمایید:", reply_markup=_edit_keyboard(ad_id))
     return EDIT_FIELD
 
 
@@ -350,12 +346,12 @@ async def _edit_field(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
         if not ad or ad["status"] != "draft":
             raise MarketplaceError("این پیش‌نویس در دسترس شما نیست.")
     except (ValueError, MarketplaceError):
-        await query.edit_message_text("این گزینه معتبر نیست یا پیش‌نویس در دسترس نیست.")
+        await render(update, context, "این گزینه معتبر نیست یا پیش‌نویس در دسترس نیست.")
         return ConversationHandler.END
     context.user_data["edit_ad_id"] = ad_id
     context.user_data["edit_field"] = field
     prompt = {"title": "عنوان تازه (حداکثر ۱۲۰ نویسه) را بنویسید.", "description": "تشریح تازه (حداکثر ۳۰۰۰ نویسه) را بنویسید.", "price": "قیمت تازه را به افغانی بنویسید؛ نمونه: «۳۰۰۰ افغانی»، «۳ هزار»، «با جورآمد» یا «توافقی».", "city": "محل تازه را بنویسید.", "contact": "راه تماس تازه‌ای را که برای عموم نشر می‌شود بنویسید."}[field]
-    await query.message.reply_text(prompt, reply_markup=_wizard_buttons("home"))
+    await render(update, context, prompt, reply_markup=_wizard_buttons("home"))
     return EDIT_VALUE
 
 
@@ -363,7 +359,7 @@ async def _edit_value(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
     ad_id = context.user_data.get("edit_ad_id")
     field = context.user_data.get("edit_field")
     if not ad_id or not field or not _market(context).owned_ad(ad_id, update.effective_user.id):
-        await update.effective_message.reply_text("روند ویرایش پیدا نشد. از /myads دوباره آغاز کنید.")
+        await render(update, context, "روند ویرایش پیدا نشد. از /myads دوباره آغاز کنید.")
         return ConversationHandler.END
     value = update.effective_message.text.strip()
     try:
@@ -376,9 +372,9 @@ async def _edit_value(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
                 raise MarketplaceError("متن از حد مجاز درازتر است.")
             _market(context).update_draft_field(ad_id, update.effective_user.id, field, value)
     except MarketplaceError as exc:
-        await update.effective_message.reply_text(str(exc), reply_markup=_wizard_buttons("home"))
+        await render(update, context, str(exc), reply_markup=_wizard_buttons("home"))
         return EDIT_VALUE
-    await update.effective_message.reply_text("تغییر ذخیره شد. بخش دیگری را انتخاب کنید یا بازبینی نهایی را بزنید.", reply_markup=_edit_keyboard(ad_id))
+    await render(update, context, "تغییر ذخیره شد. بخش دیگری را انتخاب کنید یا بازبینی نهایی را بزنید.", reply_markup=_edit_keyboard(ad_id))
     return EDIT_FIELD
 
 
@@ -392,14 +388,14 @@ async def _submit(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     await query.answer()
     draft = _current_draft(update, context)
     if not draft:
-        await query.edit_message_text("پیش‌نویس پیدا نشد. از منوی اصلی دوباره آغاز کنید.")
+        await render(update, context, "پیش‌نویس پیدا نشد. از منوی اصلی دوباره آغاز کنید.")
         return ConversationHandler.END
     try:
         _market(context).submit(draft["ad_id"], update.effective_user.id)
     except MarketplaceError as exc:
-        await query.edit_message_text(str(exc))
+        await render(update, context, str(exc))
         return ConversationHandler.END
-    await query.edit_message_text(
+    await render(update, context,
         f"آگهی شمارهٔ {draft['ad_id']} برای بررسی مدیر فرستاده شد. تا تأیید مدیر در گروه نشر نمی‌شود.",
         reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🏠 منوی اصلی", callback_data="menu:home")]]),
     )
@@ -418,12 +414,12 @@ async def _cancel_draft(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
         try:
             _market(context).transition(draft["ad_id"], "archived")
         except MarketplaceError as exc:
-            await query.edit_message_text(f"لغو پیش‌نویس انجام نشد: {exc}")
+            await render(update, context, f"لغو پیش‌نویس انجام نشد: {exc}")
             return ConversationHandler.END
     context.user_data.pop("draft_id", None)
     context.user_data.pop("ad_category", None)
     text, keyboard = _main_menu(context, update)
-    await query.edit_message_text("روند ثبت آگهی لغو شد.\n\n" + text, reply_markup=keyboard)
+    await render(update, context, "روند ثبت آگهی لغو شد.\n\n" + text, reply_markup=keyboard)
     return ConversationHandler.END
 
 
@@ -433,12 +429,12 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         try:
             _market(context).transition(draft["ad_id"], "archived")
         except MarketplaceError as exc:
-            await update.effective_message.reply_text(f"لغو پیش‌نویس انجام نشد: {exc}")
+            await render(update, context, f"لغو پیش‌نویس انجام نشد: {exc}")
             return ConversationHandler.END
     context.user_data.pop("draft_id", None)
     context.user_data.pop("ad_category", None)
     text, keyboard = _main_menu(context, update)
-    await update.effective_message.reply_text("روند لغو شد.\n\n" + text, reply_markup=keyboard)
+    await render(update, context, "روند لغو شد.\n\n" + text, reply_markup=keyboard)
     return ConversationHandler.END
 
 
@@ -456,20 +452,69 @@ async def _wizard_timeout(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
 async def my_ads(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     _touch(update, context)
-    ads = _market(context).user_ads(update.effective_user.id)
-    if not ads:
-        await update.effective_message.reply_text("هنوز آگهی ثبت نکرده‌اید. برای آغاز /newad را بزنید.")
+    await _my_ads_page(update, context, 0)
+
+
+async def _my_ads_page(update, context, page):
+    page = max(0, min(page, 1000000))
+    ads = _market(context).user_ads(update.effective_user.id, limit=6, offset=page * 5)
+    if not ads and page:
+        return await _my_ads_page(update, context, 0)
+    text = f"آگهی‌های من | صفحهٔ {page + 1}" if ads else "هنوز آگهی ثبت نکرده‌اید."
+    buttons = [
+        [InlineKeyboardButton(
+            f"#{ad['ad_id']} | {(ad['title'] or 'پیش‌نویس')[:45]} | {_ad_status_label(ad)}",
+            callback_data=f"own:detail:{ad['ad_id']}:{page}",
+        )]
+        for ad in ads[:5]
+    ]
+    navigation = []
+    if page:
+        navigation.append(InlineKeyboardButton("قبلی", callback_data=f"own:list:{page - 1}"))
+    if len(ads) > 5:
+        navigation.append(InlineKeyboardButton("بعدی", callback_data=f"own:list:{page + 1}"))
+    if navigation:
+        buttons.append(navigation)
+    buttons.append([InlineKeyboardButton("🏠 منوی اصلی", callback_data="menu:home")])
+    await render(update, context, text, reply_markup=InlineKeyboardMarkup(buttons))
+
+
+async def _my_ad_detail(update, context, ad_id, page):
+    ad = _market(context).owned_ad(ad_id, update.effective_user.id)
+    if not ad:
+        await render(update, context, "آگهی در دسترس شما نیست.", reply_markup=InlineKeyboardMarkup(
+            [[InlineKeyboardButton("بازگشت به آگهی‌ها", callback_data=f"own:list:{page}")]]
+        ))
         return
-    for ad in ads:
-        text = f"آگهی {ad['ad_id']} | {_ad_status_label(ad)}\n{html.escape(ad['title'] or 'پیش‌نویس') }"
-        actions = []
-        if ad["status"] == "published":
-            actions = [[InlineKeyboardButton("فروخته شد", callback_data=f"owner:sold:{ad['ad_id']}"), InlineKeyboardButton("برداشتن آگهی", callback_data=f"owner:archived:{ad['ad_id']}")]]
-        if ad["status"] in {"draft", "rejected", "expired", "archived"}:
-            actions = [[InlineKeyboardButton("ویرایش آگهی", callback_data=f"owner:edit:{ad['ad_id']}")]]
-        if ad["status"] in {"rejected", "expired", "archived"}:
-            actions[0].append(InlineKeyboardButton("تمدید و ثبت دوباره", callback_data=f"owner:renew:{ad['ad_id']}"))
-        await update.effective_message.reply_text(text, reply_markup=InlineKeyboardMarkup(actions) if actions else None, parse_mode="HTML")
+    price = format_price(ad) if ad["price_minor"] is not None or ad["price_negotiable"] else "ثبت نشده"
+    text = (
+        f"آگهی #{ad_id} | {_ad_status_label(ad)}\n{ad['title'] or 'پیش‌نویس'}\n\n"
+        f"{ad['description'] or ''}\n\nقیمت: {price}\n"
+        f"شهر: {ad['city'] or 'ثبت نشده'}\nتماس: {ad['contact'] or 'ثبت نشده'}"
+    )
+    buttons = []
+    if ad["status"] == "published":
+        buttons.append([
+            InlineKeyboardButton("فروخته شد", callback_data=f"owner:sold:{ad_id}"),
+            InlineKeyboardButton("برداشتن آگهی", callback_data=f"owner:archived:{ad_id}"),
+        ])
+    if ad["status"] in {"draft", "rejected", "expired", "archived"}:
+        buttons.append([InlineKeyboardButton("ویرایش آگهی", callback_data=f"owner:edit:{ad_id}")])
+    if ad["status"] in {"rejected", "expired", "archived"}:
+        buttons.append([InlineKeyboardButton("تمدید و ثبت دوباره", callback_data=f"owner:renew:{ad_id}")])
+    buttons.append([InlineKeyboardButton("⬅️ آگهی‌های من", callback_data=f"own:list:{page}")])
+    buttons.append([InlineKeyboardButton("🏠 منوی اصلی", callback_data="menu:home")])
+    await render(update, context, text, reply_markup=InlineKeyboardMarkup(buttons))
+
+
+async def my_ads_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    await query.answer()
+    parts = query.data.split(":")
+    if parts[1] == "list":
+        await _my_ads_page(update, context, int(parts[2]))
+    else:
+        await _my_ad_detail(update, context, int(parts[2]), int(parts[3]))
 
 
 async def owner_action(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -480,12 +525,12 @@ async def owner_action(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         ad_id = int(raw_id)
         if action == "renew":
             _market(context).reopen(ad_id, query.from_user.id)
-            await query.edit_message_text("پیش‌نویس دوباره باز شد. /newad را بزنید تا تکمیل و ثبت شود.")
+            await render(update, context, "پیش‌نویس دوباره باز شد. /newad را بزنید تا تکمیل و ثبت شود.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ آگهی‌های من", callback_data="own:list:0")]]))
         else:
             _market(context).owner_action(ad_id, query.from_user.id, action)
-            await query.edit_message_text("وضعیت آگهی به‌روز شد.")
+            await render(update, context, "وضعیت آگهی به‌روز شد.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ آگهی‌های من", callback_data="own:list:0")]]))
     except (ValueError, MarketplaceError):
-        await query.edit_message_text("این گزینه معتبر نیست یا آگهی دیگر در دسترس شما نیست.")
+        await render(update, context, "این گزینه معتبر نیست یا آگهی دیگر در دسترس شما نیست.")
 
 
 async def search(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -515,8 +560,7 @@ async def _render_search(update: Update, context: ContextTypes.DEFAULT_TYPE, ses
     owner_id = update.effective_user.id
     session = market.get_search_session(session_id, owner_id)
     if not session:
-        target = update.callback_query.message if update.callback_query else update.effective_message
-        await target.reply_text("این نشست جست‌وجو پایان یافته است. /search را دوباره بزنید.")
+        await render(update, context, "این نشست جست‌وجو پایان یافته است. /search را دوباره بزنید.")
         return
     total = market.search_count(keyword=session["keyword"], category_id=session["category_id"], city=session["city"],
                                 ad_type=session["ad_type"], min_price=session["min_price"], max_price=session["max_price"])
@@ -542,10 +586,9 @@ async def _render_search(update: Update, context: ContextTypes.DEFAULT_TYPE, ses
         output.append("\nآگهی نشرشده‌ای با این فیلترها پیدا نشد.")
     keyboard = _search_keyboard(session_id, session, len(rows) > 5, page)
     if edit and update.callback_query:
-        await update.callback_query.edit_message_text("\n".join(output), reply_markup=keyboard, parse_mode="HTML")
+        await render(update, context, "\n".join(output), reply_markup=keyboard, parse_mode="HTML")
     else:
-        target = update.callback_query.message if update.callback_query else update.effective_message
-        await target.reply_text("\n".join(output), reply_markup=keyboard, parse_mode="HTML")
+        await render(update, context, "\n".join(output), reply_markup=keyboard, parse_mode="HTML")
 
 
 async def search_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -553,13 +596,13 @@ async def search_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     await query.answer()
     parts = query.data.split(":")
     if len(parts) < 3:
-        await query.edit_message_text("این گزینه معتبر نیست.")
+        await render(update, context, "این گزینه معتبر نیست.")
         return
     kind, session_id, action = parts[:3]
     market = _market(context)
     session = market.get_search_session(session_id, query.from_user.id)
     if not session:
-        await query.edit_message_text("این جست‌وجو برای شما نیست یا پایان یافته است.")
+        await render(update, context, "این جست‌وجو برای شما نیست یا پایان یافته است.")
         return
     if kind == "sc":
         try:
@@ -569,32 +612,32 @@ async def search_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                 raise ValueError
             market.update_search_session(session_id, query.from_user.id, "category_id", category_id or None)
         except (ValueError, MarketplaceError):
-            await query.edit_message_text("دسته‌بندی معتبر نیست یا دیگر فعال نیست.")
+            await render(update, context, "دسته‌بندی معتبر نیست یا دیگر فعال نیست.")
             return
         await _render_search(update, context, session_id, edit=True)
         return
     if action == "page" and len(parts) == 4:
         try: page = int(parts[3])
-        except ValueError: await query.edit_message_text("شمارهٔ صفحه معتبر نیست."); return
+        except ValueError: await render(update, context, "شمارهٔ صفحه معتبر نیست."); return
         await _render_search(update, context, session_id, page, edit=True)
     elif action in {"keyword", "city", "price"}:
         market.update_search_session(session_id, query.from_user.id, "pending_field", action)
         prompt = {"keyword": "واژهٔ جست‌وجو را بنویسید (حداکثر ۸۰ نویسه).", "city": "نام شهر را بنویسید.", "price": "بازهٔ قیمت را به شکل حداقل-حداکثر بنویسید؛ برای کرانهٔ باز یکی از عددها را خالی بگذارید."}[action]
-        await query.message.reply_text(prompt)
+        await render(update, context, prompt)
     elif action == "category":
         buttons = [[InlineKeyboardButton("همهٔ دسته‌ها", callback_data=f"sc:{session_id}:0")]]
         buttons.extend([ [InlineKeyboardButton(row["name"], callback_data=f"sc:{session_id}:{row['category_id']}")] for row in market.categories() ])
         buttons.append([InlineKeyboardButton("⬅️ بازگشت به جست‌وجو", callback_data=f"sr:{session_id}:back")])
-        await query.edit_message_text("دسته‌بندی را برگزینید:", reply_markup=InlineKeyboardMarkup(buttons))
+        await render(update, context, "دسته‌بندی را برگزینید:", reply_markup=InlineKeyboardMarkup(buttons))
     elif action == "type":
         buttons = [[InlineKeyboardButton(label, callback_data=f"sr:{session_id}:settype:{key}")] for key, label in TYPE_LABELS.items()]
         buttons.append([InlineKeyboardButton("همهٔ نوع‌ها", callback_data=f"sr:{session_id}:settype:all")])
         buttons.append([InlineKeyboardButton("⬅️ بازگشت به جست‌وجو", callback_data=f"sr:{session_id}:back")])
-        await query.edit_message_text("نوع آگهی را برگزینید:", reply_markup=InlineKeyboardMarkup(buttons))
+        await render(update, context, "نوع آگهی را برگزینید:", reply_markup=InlineKeyboardMarkup(buttons))
     elif action == "settype" and len(parts) == 4:
         ad_type = parts[3]
         if ad_type != "all" and ad_type not in TYPE_LABELS:
-            await query.edit_message_text("نوع آگهی معتبر نیست.")
+            await render(update, context, "نوع آگهی معتبر نیست.")
             return
         market.update_search_session(session_id, query.from_user.id, "ad_type", None if ad_type == "all" else ad_type)
         await _render_search(update, context, session_id, edit=True)
@@ -605,7 +648,7 @@ async def search_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     elif action == "back":
         await _render_search(update, context, session_id, edit=True)
     else:
-        await query.edit_message_text("این گزینه معتبر نیست.")
+        await render(update, context, "این گزینه معتبر نیست.")
 
 
 async def search_filter_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -618,7 +661,7 @@ async def search_filter_text(update: Update, context: ContextTypes.DEFAULT_TYPE)
     try:
         if value.casefold() in {"لغو", "cancel"}:
             market.update_search_session(session["session_id"], update.effective_user.id, "pending_field", None)
-            await update.effective_message.reply_text("تغییر فیلتر لغو شد.")
+            await render(update, context, "تغییر فیلتر لغو شد.")
             return
         if field in {"keyword", "city"}:
             if not value or len(value) > 80:
@@ -636,7 +679,7 @@ async def search_filter_text(update: Update, context: ContextTypes.DEFAULT_TYPE)
             market.update_search_session(session["session_id"], update.effective_user.id, "max_price", bounds[1])
         market.update_search_session(session["session_id"], update.effective_user.id, "pending_field", None)
     except (MarketplaceError, ValueError) as exc:
-        await update.effective_message.reply_text(str(exc) if isinstance(exc, MarketplaceError) else "قیمت باید عدد معتبر باشد.")
+        await render(update, context, str(exc) if isinstance(exc, MarketplaceError) else "قیمت باید عدد معتبر باشد.")
         return
     await _render_search(update, context, session["session_id"])
 
@@ -662,15 +705,15 @@ async def navigation(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         await _render_search(update, context, session_id, edit=True)
     elif query.data == "menu:home":
         text, keyboard = _main_menu(context, update)
-        await query.edit_message_text(text, reply_markup=keyboard)
+        await render(update, context, text, reply_markup=keyboard)
     elif query.data == "menu:rules":
         text = effective_rules(context)
-        await query.edit_message_text(
+        await render(update, context,
             "📋 مقررات بازارچه:\n" + text,
             reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🏠 منوی اصلی", callback_data="menu:home")]]),
         )
     elif query.data == "menu:help":
-        await query.edit_message_text(
+        await render(update, context,
             "💬 کمک و همکاری\nبرای پشتیبانی یا همکاری با خلیل نوری تماس بگیرید.\nبرای فعالیت در گروه، وضعیت دعوت‌ها را از دکمهٔ زیر ببینید.",
             reply_markup=help_keyboard(),
         )
@@ -678,19 +721,19 @@ async def navigation(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         buttons = [[InlineKeyboardButton(row["name"], callback_data=f"browse:{row['category_id']}")] for row in _market(context).categories()]
         buttons.append([InlineKeyboardButton("همهٔ آگهی‌ها", callback_data="browse:all")])
         buttons.append([InlineKeyboardButton("🏠 منوی اصلی", callback_data="menu:home")])
-        await query.edit_message_text("📂 یک دسته‌بندی را برای دیدن آگهی‌ها برگزینید:", reply_markup=InlineKeyboardMarkup(buttons))
+        await render(update, context, "📂 یک دسته‌بندی را برای دیدن آگهی‌ها برگزینید:", reply_markup=InlineKeyboardMarkup(buttons))
     elif query.data.startswith("browse:"):
         selection = query.data.partition(":")[2]
         try:
             category_id = None if selection == "all" else int(selection)
         except ValueError:
-            await query.edit_message_text("دسته‌بندی معتبر نیست.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🏠 منوی اصلی", callback_data="menu:home")]]))
+            await render(update, context, "دسته‌بندی معتبر نیست.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🏠 منوی اصلی", callback_data="menu:home")]]))
             return
         session_id = _market(context).create_search_session(query.from_user.id)
         if category_id is not None:
             enabled = {row["category_id"] for row in _market(context).categories()}
             if category_id not in enabled:
-                await query.edit_message_text("این دسته‌بندی دیگر فعال نیست.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🏠 منوی اصلی", callback_data="menu:home")]]))
+                await render(update, context, "این دسته‌بندی دیگر فعال نیست.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🏠 منوی اصلی", callback_data="menu:home")]]))
                 return
             _market(context).update_search_session(session_id, query.from_user.id, "category_id", category_id)
         await _render_search(update, context, session_id, edit=True)
@@ -702,7 +745,7 @@ async def wizard_navigation(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     destination = query.data.partition(":back:")[2]
     if destination == "home":
         text, keyboard = _main_menu(context, update)
-        await query.edit_message_text(text, reply_markup=keyboard)
+        await render(update, context, text, reply_markup=keyboard)
         return ConversationHandler.END
 
     labels = {
@@ -716,7 +759,7 @@ async def wizard_navigation(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         "photos": (PHOTOS, f"عکس‌های آگهی را بفرستید؛ تاکنون {len(_market(context).photos(_current_draft(update, context)['ad_id'])) if _current_draft(update, context) else 0} عکس ثبت شده است."),
     }
     if destination not in labels:
-        await query.edit_message_text("این مرحله پیدا نشد. روند ثبت را لغو و دوباره آغاز کنید.")
+        await render(update, context, "این مرحله پیدا نشد. روند ثبت را لغو و دوباره آغاز کنید.")
         return ConversationHandler.END
     state, prompt = labels[destination]
     if destination == "category":
@@ -734,8 +777,37 @@ async def wizard_navigation(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     else:
         back_to = {"title": "type", "description": "title", "price": "description", "city": "price", "contact": "city"}[destination]
         markup = _wizard_buttons(back_to)
-    await query.edit_message_text(prompt, reply_markup=markup)
+    await render(update, context, prompt, reply_markup=markup)
     return state
+
+
+async def _wizard_start(update, context):
+    await start(update, context)
+    return ConversationHandler.END
+
+
+async def _wizard_admin(update, context):
+    from handlers.admin import admin_panel
+    await admin_panel(update, context)
+    return ConversationHandler.END
+
+
+async def _wizard_home(update, context):
+    await navigation(update, context)
+    return ConversationHandler.END
+
+
+async def _wizard_menu_command(update, context):
+    command = update.effective_message.text.split(maxsplit=1)[0].split("@")[0]
+    if command == "/invites":
+        from handlers.group_gate import invite_status
+        await invite_status(update, context)
+    else:
+        await {
+            "/help": help_command, "/rules": rules, "/myads": my_ads,
+            "/search": search, "/rankings": rankings,
+        }[command](update, context)
+    return ConversationHandler.END
 
 
 def user_handlers() -> list:
@@ -765,6 +837,10 @@ def user_handlers() -> list:
         },
         fallbacks=[
             CommandHandler("cancel", cancel),
+            CommandHandler("start", _wizard_start),
+            CommandHandler("admin", _wizard_admin),
+            CommandHandler(["help", "rules", "myads", "search", "rankings", "invites"], _wizard_menu_command),
+            CallbackQueryHandler(_wizard_home, pattern=r"^menu:home$"),
             CallbackQueryHandler(_cancel_draft, pattern=r"^ad:cancel$"),
             CallbackQueryHandler(wizard_navigation, pattern=r"^ad:back:[a-z]+$"),
         ],
@@ -780,6 +856,7 @@ def user_handlers() -> list:
         CommandHandler("cancel", cancel),
         MessageHandler(filters.TEXT & ~filters.COMMAND, search_filter_text),
         CallbackQueryHandler(search_callback, pattern=r"^(sr|sc):"),
+        CallbackQueryHandler(my_ads_callback, pattern=r"^own:(?:list:\d+|detail:\d+:\d+)$"),
         CallbackQueryHandler(owner_action, pattern=r"^owner:(sold|archived|renew):\d+$"),
         CallbackQueryHandler(report_ad, pattern=r"^report:\d+$"),
         CallbackQueryHandler(navigation, pattern=r"^(search|menu:(home|rules|help|categories|search)|browse:(all|\d+))$"),

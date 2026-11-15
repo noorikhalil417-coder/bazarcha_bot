@@ -20,6 +20,7 @@ from telegram import (
 from telegram.error import TelegramError
 from telegram.ext import CallbackQueryHandler, CommandHandler, ContextTypes
 
+from handlers.panel import render
 from services.backup import create_backup, restore_backup
 from services.marketplace import Marketplace, MarketplaceError, format_public_ad
 
@@ -50,13 +51,15 @@ async def _deny(query) -> None:
 async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user = update.effective_user
     if not user or not _is_admin(context, user.id):
-        await update.effective_message.reply_text("شما اجازهٔ دسترسی به پنل مدیر را ندارید.")
+        await render(update, context, "شما اجازهٔ دسترسی به پنل مدیر را ندارید.")
         return
-    await update.effective_message.reply_text("پنل مدیریت بازارچه:", reply_markup=_dashboard())
+    await render(update, context, "پنل مدیریت بازارچه:", reply_markup=_dashboard())
 
 
 def _dashboard() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup([[InlineKeyboardButton(label, callback_data=f"admin:{key}") for key, label in SECTIONS[index:index + 2]] for index in range(0, len(SECTIONS), 2)])
+    rows = [[InlineKeyboardButton(label, callback_data=f"admin:{key}") for key, label in SECTIONS[index:index + 2]] for index in range(0, len(SECTIONS), 2)]
+    rows.append([InlineKeyboardButton("🏠 منوی اصلی", callback_data="menu:home")])
+    return InlineKeyboardMarkup(rows)
 
 
 def _group_message_url(chat_id: int, message_id: int, username: str | None = None) -> str | None:
@@ -105,11 +108,11 @@ async def _dashboard_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
     await query.answer()
     section = query.data.partition(":")[2]
     if section == "home":
-        await query.edit_message_text("پنل مدیریت بازارچه:", reply_markup=_dashboard())
+        await render(update, context, "پنل مدیریت بازارچه:", reply_markup=_dashboard())
         return
     known = dict(SECTIONS)
     if section not in known:
-        await query.edit_message_text("این بخش پیدا نشد.")
+        await render(update, context, "این بخش پیدا نشد.")
         return
     db = context.application.bot_data["database"]
     text, rows = known[section], []
@@ -143,7 +146,7 @@ async def _dashboard_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
         )
     elif section == "group_gate":
         from handlers.group_gate import render_panel
-        await render_panel(query, context)
+        await render_panel(update, context)
         return
     elif section == "group_review":
         rows = _market(context).pending_group_reviews()
@@ -241,7 +244,7 @@ async def _dashboard_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
         ]]
     elif section == "group_gate":
         from handlers.group_gate import render_panel
-        await render_panel(query, context)
+        await render_panel(update, context)
         return
     elif section == "group_review":
         buttons = []
@@ -264,7 +267,7 @@ async def _dashboard_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
     elif section == "backup":
         buttons = [[InlineKeyboardButton("ساخت پشتیبان", callback_data="backup:create")]]
     buttons.append([InlineKeyboardButton("بازگشت به پنل", callback_data="admin:home")])
-    await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode="HTML")
+    await render(update, context, text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode="HTML")
 
 
 async def _admin_action(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -281,13 +284,13 @@ async def _admin_action(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         if action in {"approve", "reject", "edits", "request", "archive", "restore"}:
             if action in {"archive", "restore"}:
                 market.transition(raw_id, "archived" if action == "archive" else "draft", query.from_user.id)
-                await query.edit_message_text(f"آگهی {raw_id} بایگانی شد." if action == "archive" else f"آگهی {raw_id} به پیش‌نویس برگشت.")
+                await render(update, context, f"آگهی {raw_id} بایگانی شد." if action == "archive" else f"آگهی {raw_id} به پیش‌نویس برگشت.")
                 return
             target = {"approve": "approved", "reject": "rejected", "edits": "rejected", "request": "rejected"}[action]
             note = "لطفاً معلومات آگهی را تکمیل یا اصلاح کرده و دوباره ثبت کنید." if action in {"edits", "request"} else ""
             market.transition(raw_id, target, query.from_user.id, note)
             ad = market.get_ad(raw_id)
-            await query.edit_message_text(
+            await render(update, context,
                 f"آگهی {raw_id}: {'تأیید شد' if action == 'approve' else 'برای تکمیل به فروشنده برگشت' if action in {'edits', 'request'} else 'رد شد'}."
             )
             if action == "approve":
@@ -299,11 +302,11 @@ async def _admin_action(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
                     logger.info("Unable to notify owner of ad review %s: %s", raw_id, type(exc).__name__)
         elif action in {"review", "dismiss"}:
             market.review_report(raw_id, query.from_user.id, action == "dismiss")
-            await query.edit_message_text(f"گزارش {raw_id} بررسی شد.")
+            await render(update, context, f"گزارش {raw_id} بررسی شد.")
         else:
-            await query.edit_message_text("گزینه معتبر نیست.")
+            await render(update, context, "گزینه معتبر نیست.")
     except (ValueError, IndexError, MarketplaceError) as exc:
-        await query.edit_message_text(str(exc) if isinstance(exc, MarketplaceError) else "این درخواست معتبر نیست.")
+        await render(update, context, str(exc) if isinstance(exc, MarketplaceError) else "این درخواست معتبر نیست.")
 
 
 async def _publish_ad(context: ContextTypes.DEFAULT_TYPE, ad_id: int, admin_id: int, manual_retry: bool = False) -> None:
@@ -381,10 +384,10 @@ async def _settings(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             value = "0" if market.get_setting(key, "1") == "1" else "1"
         elif key == "blocked_phrases":
             value = market.get_setting(key)
-            await query.edit_message_text(f"عبارت‌های بستهٔ کنونی: {html.escape(value) or 'ندارد'}\nبرای افزودن عبارت، /blockphrase متن را بزنید.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("بازگشت", callback_data="admin:antispam")]]), parse_mode="HTML")
+            await render(update, context, f"عبارت‌های بستهٔ کنونی: {html.escape(value) or 'ندارد'}\nبرای افزودن عبارت، /blockphrase متن را بزنید.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("بازگشت", callback_data="admin:antispam")]]), parse_mode="HTML")
             return
         else:
-            await query.edit_message_text("این تنظیم شناخته نشد.")
+            await render(update, context, "این تنظیم شناخته نشد.")
             return
         market.set_setting(key, value, query.from_user.id)
         destination = "publication" if key == "review_mode" else "reputation" if key == "public_rankings" else "group" if key in {"welcome_enabled", "join_approval"} else "antispam"
@@ -398,12 +401,12 @@ async def _settings(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         state = "روشن" if value == "1" else "خاموش"
         if key == "review_mode":
             state = "اجباری"
-        await query.edit_message_text(
+        await render(update, context,
             f"{labels.get(key, key)}: {state}.",
             reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("بازگشت", callback_data=f"admin:{destination}")]]),
         )
     except MarketplaceError as exc:
-        await query.edit_message_text(str(exc))
+        await render(update, context, str(exc))
 
 
 async def _category_toggle(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -419,9 +422,9 @@ async def _category_toggle(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             cursor = conn.execute("UPDATE categories SET enabled=1-enabled WHERE category_id=?", (category_id,))
             if cursor.rowcount != 1: raise ValueError
             conn.execute("INSERT INTO admin_actions(admin_id,action,target) VALUES(?,'category_toggle',?)", (query.from_user.id, str(category_id)))
-        await query.edit_message_text("وضعیت دسته‌بندی تغییر کرد. برای دیدن فهرست دوباره /admin را بزنید.")
+        await render(update, context, "وضعیت دسته‌بندی تغییر کرد. برای دیدن فهرست دوباره /admin را بزنید.")
     except (ValueError, TypeError):
-        await query.edit_message_text("دسته‌بندی پیدا نشد.")
+        await render(update, context, "دسته‌بندی پیدا نشد.")
 
 
 async def _trust_toggle(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -433,9 +436,9 @@ async def _trust_toggle(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     try:
         user_id = int(query.data.partition(":")[2])
         trusted = _market(context).set_trusted(user_id, query.from_user.id)
-        await query.edit_message_text(f"وضعیت اعتماد کاربر {user_id}: {'مورد اعتماد' if trusted else 'عادی'}.")
+        await render(update, context, f"وضعیت اعتماد کاربر {user_id}: {'مورد اعتماد' if trusted else 'عادی'}.")
     except ValueError:
-        await query.edit_message_text("شناسه معتبر نیست.")
+        await render(update, context, "شناسه معتبر نیست.")
 
 
 async def _group_review_action(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -449,14 +452,14 @@ async def _group_review_action(update: Update, context: ContextTypes.DEFAULT_TYP
         chat_id, message_id, username = _market(context).mark_group_message_reviewed(event_id, query.from_user.id)
         url = _group_message_url(chat_id, message_id, username)
         if url:
-            await query.edit_message_text(
+            await render(update, context,
                 f"پیام احتمالی آگهی #{event_id} بررسی‌شده ثبت شد؛ پیام اصلی حذف یا تغییر داده نشد.",
                 reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("بازکردن پیام", url=url)]]),
             )
         else:
-            await query.edit_message_text(f"پیام احتمالی آگهی #{event_id} بررسی‌شده ثبت شد؛ پیام اصلی حذف یا تغییر داده نشد.")
+            await render(update, context, f"پیام احتمالی آگهی #{event_id} بررسی‌شده ثبت شد؛ پیام اصلی حذف یا تغییر داده نشد.")
     except (ValueError, MarketplaceError) as exc:
-        await query.edit_message_text(str(exc) if isinstance(exc, MarketplaceError) else "شناسهٔ پیام معتبر نیست.")
+        await render(update, context, str(exc) if isinstance(exc, MarketplaceError) else "شناسهٔ پیام معتبر نیست.")
 
 
 async def join_request_decision(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -480,10 +483,10 @@ async def join_request_decision(update: Update, context: ContextTypes.DEFAULT_TY
                 "INSERT INTO admin_actions(admin_id,action,target) VALUES(?,?,?)",
                 (query.from_user.id, f"join_request_{decision}", f"{chat_id}:{user_id}"),
             )
-        await query.edit_message_text(f"درخواست عضویت کاربر {user_id}: {'پذیرفته شد' if decision == 'approve' else 'رد شد'}.")
+        await render(update, context, f"درخواست عضویت کاربر {user_id}: {'پذیرفته شد' if decision == 'approve' else 'رد شد'}.")
     except (ValueError, TelegramError) as exc:
         logger.info("Join request decision failed: %s", type(exc).__name__)
-        await query.edit_message_text("درخواست پیدا نشد، پایان یافته یا ربات اجازهٔ مدیریت آن را ندارد.")
+        await render(update, context, "درخواست پیدا نشد، پایان یافته یا ربات اجازهٔ مدیریت آن را ندارد.")
 
 
 async def _feature_toggle(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -499,9 +502,9 @@ async def _feature_toggle(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             cursor = conn.execute("UPDATE ads SET featured_until=CASE WHEN featured_until > strftime('%Y-%m-%dT%H:%M:%fZ','now') THEN NULL ELSE ? END WHERE ad_id=? AND status='published'", ((datetime.now(UTC) + timedelta(days=7)).isoformat(), ad_id))
             if cursor.rowcount != 1: raise ValueError
             conn.execute("INSERT INTO admin_actions(admin_id,action,target) VALUES(?,'featured_toggle',?)", (query.from_user.id, str(ad_id)))
-        await query.edit_message_text("وضعیت آگهی ویژه تغییر کرد.")
+        await render(update, context, "وضعیت آگهی ویژه تغییر کرد.")
     except (ValueError, TypeError):
-        await query.edit_message_text("آگهی نشرشده پیدا نشد.")
+        await render(update, context, "آگهی نشرشده پیدا نشد.")
 
 
 async def _backup_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:

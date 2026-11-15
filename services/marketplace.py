@@ -299,9 +299,9 @@ class Marketplace:
         with self.db.connect() as conn:
             return conn.execute("SELECT * FROM ads WHERE ad_id=? AND owner_id=?", (ad_id, owner_id)).fetchone()
 
-    def user_ads(self, owner_id: int, limit: int = 20) -> list[sqlite3.Row]:
+    def user_ads(self, owner_id: int, limit: int = 20, offset: int = 0) -> list[sqlite3.Row]:
         with self.db.connect() as conn:
-            return conn.execute("SELECT ad_id,title,status,review_note,created_at FROM ads WHERE owner_id=? ORDER BY ad_id DESC LIMIT ?", (owner_id, min(max(limit, 1), 50))).fetchall()
+            return conn.execute("SELECT ad_id,title,status,review_note,created_at FROM ads WHERE owner_id=? ORDER BY ad_id DESC LIMIT ? OFFSET ?", (owner_id, min(max(limit, 1), 50), max(offset, 0))).fetchall()
 
     def transition(self, ad_id: int, new_status: str, admin_id: int | None = None, note: str = "") -> None:
         with self.db.transaction() as conn:

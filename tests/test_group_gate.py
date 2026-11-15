@@ -154,6 +154,7 @@ class GateTests(unittest.IsolatedAsyncioTestCase):
             ),
             delete_message=AsyncMock(),
             send_message=AsyncMock(return_value=SimpleNamespace(message_id=1000)),
+            edit_message_text=AsyncMock(),
             create_chat_invite_link=AsyncMock(
                 return_value=SimpleNamespace(invite_link="https://t.me/+private-link")
             ),
@@ -288,14 +289,14 @@ class GateTests(unittest.IsolatedAsyncioTestCase):
         await invite_status(self.update, self.context)
         self.bot.create_chat_invite_link.assert_awaited_once()
         self.assertEqual(self.p.link(-1001, 100), "https://t.me/+private-link")
-        self.assertIn("دعوت معتبر: 0", self.message.reply_text.await_args.args[0])
+        self.assertIn("دعوت معتبر: 0", self.bot.edit_message_text.await_args.kwargs["text"])
         self.user.id = 200
         self.bot.get_chat_member.side_effect = None
         self.bot.get_chat_member.return_value = SimpleNamespace(
             status=ChatMemberStatus.LEFT
         )
         await invite_status(self.update, self.context)
-        self.assertIn("ابتدا عضو گروه", self.message.reply_text.await_args.args[0])
+        self.assertIn("ابتدا عضو گروه", self.bot.send_message.await_args.kwargs["text"])
         self.assertIsNone(self.p.link(-1001, 200))
 
     async def test_membership_counts_actual_join_only_and_excludes_bots(self):
@@ -342,6 +343,23 @@ class GateTests(unittest.IsolatedAsyncioTestCase):
         )
         await admin_gate_callback(SimpleNamespace(callback_query=query), self.context)
         self.assertTrue(self.p.settings(-1001)["invite_required"])
+
+    async def test_refresh_unchanged_panel_is_a_noop_but_other_errors_propagate(self):
+        self.enable("invite_required")
+        query = SimpleNamespace(
+            from_user=SimpleNamespace(id=41),
+            data="gate:panel",
+            answer=AsyncMock(),
+            edit_message_text=AsyncMock(side_effect=BadRequest("Message is not modified")),
+        )
+        for _ in range(3):
+            await admin_gate_callback(SimpleNamespace(callback_query=query), self.context)
+        self.assertEqual(query.answer.await_count, 3)
+        self.assertTrue(self.p.settings(-1001)["invite_required"])
+        self.assertFalse(self.p.settings(-1001)["ad_delete"])
+        query.edit_message_text.side_effect = BadRequest("Message can't be edited")
+        with self.assertRaises(BadRequest):
+            await admin_gate_callback(SimpleNamespace(callback_query=query), self.context)
 
     async def test_menu_support_rules_and_charkhak_keep_other_entries(self):
         from handlers.user import _main_menu, help_keyboard, effective_rules
