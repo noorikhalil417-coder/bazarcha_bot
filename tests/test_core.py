@@ -12,7 +12,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 from config import Config, ConfigurationError
-from database import _SCHEMA_V1, DEFAULT_CATEGORIES, Database
+from database import _SCHEMA_V1, DEFAULT_CATEGORIES, SCHEMA_VERSION, Database
 from services.backup import (
     create_backup,
     prune_backups,
@@ -86,7 +86,7 @@ class DatabaseTests(ProjectTestCase):
     def test_initialization_seed_and_integrity_are_repeatable(self):
         self.database.initialize()
         with self.database.connect() as connection:
-            self.assertEqual(connection.execute("PRAGMA user_version").fetchone()[0], 3)
+            self.assertEqual(connection.execute("PRAGMA user_version").fetchone()[0], SCHEMA_VERSION)
             self.assertEqual(connection.execute("SELECT count(*) FROM categories").fetchone()[0], len(DEFAULT_CATEGORIES))
             self.assertEqual(connection.execute("PRAGMA integrity_check").fetchone()[0], "ok")
 
@@ -104,19 +104,21 @@ class DatabaseTests(ProjectTestCase):
         with migrated.connect() as conn:
             self.assertEqual(conn.execute("SELECT display_name FROM users WHERE user_id=77").fetchone()[0], "پیشین")
             self.assertIsNotNone(conn.execute("SELECT expiry_notified_at FROM ads LIMIT 1").description)
-            self.assertEqual(conn.execute("PRAGMA user_version").fetchone()[0], 3)
+            self.assertEqual(conn.execute("PRAGMA user_version").fetchone()[0], SCHEMA_VERSION)
 
     def test_v2_migration_adds_sessions_jobs_and_album_message_tables(self):
         with self.database.transaction() as conn:
             conn.execute("DROP TABLE ad_publication_messages")
             conn.execute("DROP TABLE scheduled_state")
             conn.execute("DROP TABLE search_sessions")
+            conn.execute("DROP TABLE miniapp_media")
+            conn.execute("ALTER TABLE ads DROP COLUMN miniapp_revision")
             conn.execute("PRAGMA user_version=2")
         self.database.initialize()
         with self.database.connect() as conn:
             table_names = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
             self.assertTrue({"search_sessions", "scheduled_state", "ad_publication_messages"}.issubset(table_names))
-            self.assertEqual(conn.execute("PRAGMA user_version").fetchone()[0], 3)
+            self.assertEqual(conn.execute("PRAGMA user_version").fetchone()[0], SCHEMA_VERSION)
 
     def test_scheduled_job_claim_is_single_owner_and_retryable(self):
         barrier = threading.Barrier(2)

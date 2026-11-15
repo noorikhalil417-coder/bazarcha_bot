@@ -247,15 +247,16 @@ class Marketplace:
         with self.db.connect() as conn:
             return conn.execute("SELECT * FROM ads WHERE owner_id=? AND status='draft' ORDER BY ad_id DESC LIMIT 1", (owner_id,)).fetchone()
 
-    def photos(self, ad_id: int) -> list[str]:
+    def photos(self, ad_id: int) -> list[str | bytes]:
         with self.db.connect() as conn:
-            return [row[0] for row in conn.execute("SELECT file_id FROM ad_photos WHERE ad_id=? ORDER BY sort_order", (ad_id,))]
+            return [row["data"] if row["data"] is not None else row["file_id"] for row in conn.execute(
+                "SELECT p.file_id,m.data FROM ad_photos p LEFT JOIN miniapp_media m ON m.file_id=p.file_id WHERE p.ad_id=? ORDER BY p.sort_order", (ad_id,))]
 
     def update_draft_field(self, ad_id: int, owner_id: int, field: str, value: Any) -> None:
         if field not in {"title", "description", "price_minor", "currency", "price_negotiable", "city", "contact"}:
             raise MarketplaceError("این بخش قابل تغییر نیست.")
         with self.db.transaction() as conn:
-            cursor = conn.execute(f"UPDATE ads SET {field}=?, updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE ad_id=? AND owner_id=? AND status='draft'", (value, ad_id, owner_id))
+            cursor = conn.execute(f"UPDATE ads SET {field}=?, miniapp_revision=miniapp_revision+1, updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE ad_id=? AND owner_id=? AND status='draft'", (value, ad_id, owner_id))
             if cursor.rowcount != 1:
                 raise MarketplaceError("این آگهی در دسترس شما نیست.")
 
@@ -268,6 +269,7 @@ class Marketplace:
             if count >= 10:
                 raise MarketplaceError("حداکثر ۱۰ عکس پذیرفته می‌شود.")
             conn.execute("INSERT OR IGNORE INTO ad_photos(ad_id,file_id,sort_order) VALUES(?,?,?)", (ad_id, file_id, count))
+            conn.execute("UPDATE ads SET miniapp_revision=miniapp_revision+1 WHERE ad_id=?", (ad_id,))
 
     def submit(self, ad_id: int, owner_id: int, review_required: bool = True) -> str:
         """Queue a complete draft for administrator approval.

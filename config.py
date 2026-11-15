@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 from pathlib import Path
+from urllib.parse import urlsplit
 
 
 class ConfigurationError(ValueError):
@@ -49,6 +50,8 @@ class Config:
     cleanup_retention_days: int
     welcome_message: str
     group_rules: str
+    mini_app_url: str = ""
+    web_port: int = 8080
 
     @classmethod
     def from_env(cls, environ: dict[str, str] | None = None) -> Config:
@@ -68,6 +71,14 @@ class Config:
         log_level = values.get("LOG_LEVEL", "INFO").strip().upper()
         if log_level not in {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}:
             raise ConfigurationError("LOG_LEVEL معتبر نیست.")
+        mini_app_url = values.get("MINI_APP_URL", "").strip().rstrip("/")
+        if mini_app_url:
+            parsed = urlsplit(mini_app_url)
+            if parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password or parsed.query or parsed.fragment or parsed.path not in ("", "/"):
+                raise ConfigurationError("MINI_APP_URL باید آدرس اصلی HTTPS بدون مسیر باشد.")
+        web_port = _integer("PORT", values.get("PORT"), 8080)
+        if web_port > 65535:
+            raise ConfigurationError("PORT معتبر نیست.")
         return cls(
             token=token,
             admin_ids=admin_ids,
@@ -84,4 +95,6 @@ class Config:
             cleanup_retention_days=_integer("CLEANUP_RETENTION_DAYS", values.get("CLEANUP_RETENTION_DAYS"), 30),
             welcome_message=values.get("WELCOME_MESSAGE", "به بازارچه خوش آمدید! برای ثبت یا جست‌وجوی آگهی از منوی ربات استفاده کنید."),
             group_rules=values.get("GROUP_RULES", "با احترام رفتار کنید. آگهی نادرست، تکراری و محتوای خلاف قانون مجاز نیست."),
+            mini_app_url=mini_app_url,
+            web_port=web_port,
         )
