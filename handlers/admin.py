@@ -22,7 +22,7 @@ from telegram.ext import CallbackQueryHandler, CommandHandler, ContextTypes
 
 from handlers.panel import render
 from services.backup import create_backup, restore_backup
-from services.marketplace import Marketplace, MarketplaceError, format_public_ad
+from services.marketplace import Marketplace, MarketplaceError, contact_button_label, format_public_ad, public_ad_title, public_contact_button
 
 logger = logging.getLogger(__name__)
 
@@ -321,14 +321,14 @@ async def _publish_ad(context: ContextTypes.DEFAULT_TYPE, ad_id: int, admin_id: 
     if not ad:
         market.fail_publication(ad_id, admin_id)
         return
-    caption = f"{ad['title']} | آگهی #{ad_id}"
-    details = format_public_ad(ad)
+    caption = f"{public_ad_title(ad)} | آگهی #{ad_id}"
+    contact_url, hide_contact = public_contact_button(ad)
+    details = format_public_ad(ad, hide_telegram_contact=hide_contact)
     try:
         photos = market.photos(ad_id)
         buttons = [[InlineKeyboardButton("⚠️ گزارش آگهی", callback_data=f"report:{ad_id}")]]
-        username = ad["owner_username"]
-        if username and re.fullmatch(r"[A-Za-z][A-Za-z0-9_]{4,31}", username):
-            buttons.insert(0, [InlineKeyboardButton("💬 پیام به فروشنده", url=f"https://t.me/{username}")])
+        if contact_url:
+            buttons.insert(0, [InlineKeyboardButton(contact_button_label(ad["ad_type"]), url=contact_url)])
         publication_buttons = InlineKeyboardMarkup(buttons)
         if len(photos) > 1:
             media = [InputMediaPhoto(media=file_id, caption=caption if index == 0 else None) for index, file_id in enumerate(photos)]

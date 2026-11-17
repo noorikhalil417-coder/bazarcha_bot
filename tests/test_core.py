@@ -19,7 +19,7 @@ from services.backup import (
     restore_backup,
     validate_backup,
 )
-from services.marketplace import Marketplace, MarketplaceError, format_price, parse_price_input, validate_ad
+from services.marketplace import Marketplace, MarketplaceError, format_price, parse_price_input, public_ad_title, public_contact_button, validate_ad
 from services.moderation import Moderation
 
 VALID_ENV = {"TELEGRAM_BOT_TOKEN": "123456:placeholder", "ADMIN_IDS": "41,42"}
@@ -50,6 +50,19 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(railway["build"]["builder"], "RAILPACK")
         self.assertEqual(railway["deploy"]["startCommand"], "python bot.py")
         self.assertEqual((root / ".python-version").read_text(encoding="utf-8").strip(), "3.12")
+
+    def test_public_title_avoids_repeating_the_entire_description(self):
+        ad = {'title': 'خریدار گوشی سامسونگ', 'description': 'خریدار گوشی سامسونگ', 'ad_type': 'wanted'}
+        self.assertEqual(public_ad_title(ad), 'درخواست خرید')
+        text = 'گوشی سامسونگ با حافظه ۱۲۸ گیگ و وضعیت بسیار سالم برای خرید در کابل با بودجه مشخص و بدون شکستگی'
+        ad = {'title': text[:70], 'description': text, 'ad_type': 'wanted'}
+        self.assertEqual(public_ad_title(ad), 'خریدار گوشی سامسونگ')
+
+    def test_invalid_telegram_link_is_not_hidden_without_matching_button(self):
+        ad = {'contact': 'https://t.me/test_user/extra', 'owner_username': None}
+        self.assertEqual(public_contact_button(ad), (None, False))
+        ad['owner_username'] = 'seller'
+        self.assertEqual(public_contact_button(ad), ('https://t.me/seller', False))
 
 
 class ProjectTestCase(unittest.TestCase):

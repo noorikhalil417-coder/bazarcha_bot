@@ -79,15 +79,62 @@ def category_emoji(category_name: str) -> str:
     return "🛍️"
 
 
-def format_public_ad(ad: dict[str, Any] | sqlite3.Row) -> str:
+def suggest_ad_title(text: str, ad_type: str) -> str:
+    fallback = {"wanted": "درخواست خرید", "sale": "آگهی فروش", "rental": "آگهی کرایه", "service": "آگهی خدمات"}
+    if ad_type == "wanted":
+        if re.search(r"(?<!\w)(?:یا|نه|نیست|نمی‌خواهم|نمیخواهم)(?!\w)", text):
+            return fallback["wanted"]
+        matches = list(re.finditer(
+            r"(?<!\w)(گوشی|موبایل|لپتاپ|موترسایکل|موتر|ماشین|خانه|آپارتمان|زمین)"
+            r"(?:\s+(سامسونگ|آیفون|اپل|نوکیا|هواوی|شیائومی|تویوتا))?(?!\w)",
+            text, re.IGNORECASE,
+        ))
+        return "خریدار " + matches[0].group(0) if len(matches) == 1 else fallback["wanted"]
+    first = re.split(r"[،,؛;\n.!؟?]", text.strip(), maxsplit=1)[0]
+    words = first.split()[:5]
+    title = " ".join(words)
+    if len(title) > 48:
+        title = title[:48].rsplit(" ", 1)[0]
+    if not title or title == text.strip():
+        return fallback.get(ad_type, "آگهی")
+    return title
+
+
+def public_ad_title(ad: dict[str, Any] | sqlite3.Row) -> str:
+    title, description = ad["title"].strip(), ad["description"].strip()
+    if title == description or (len(title) >= 60 and description.startswith(title)):
+        suggested = suggest_ad_title(description, ad["ad_type"])
+        if suggested == description:
+            return {"wanted": "درخواست خرید", "sale": "آگهی فروش", "rental": "آگهی کرایه", "service": "آگهی خدمات"}.get(ad["ad_type"], "آگهی")
+        return suggested
+    return title
+
+
+def public_contact_button(ad: dict[str, Any] | sqlite3.Row) -> tuple[str | None, bool]:
+    contact = ad["contact"].strip()
+    match = re.fullmatch(r"https://t\.me/([A-Za-z0-9_]{5,32})", contact)
+    if match:
+        return contact, True
+    username = ad["owner_username"]
+    if username and re.fullmatch(r"[A-Za-z][A-Za-z0-9_]{4,31}", username):
+        return f"https://t.me/{username}", False
+    return None, False
+
+
+def contact_button_label(ad_type: str) -> str:
+    return "💬 پیام به خریدار" if ad_type == "wanted" else "💬 پیام به فروشنده"
+
+
+def format_public_ad(ad: dict[str, Any] | sqlite3.Row, *, hide_telegram_contact: bool = False) -> str:
     kind = {"sale": "فروش", "wanted": "خرید", "rental": "کرایه", "service": "خدمات"}.get(ad["ad_type"], "آگهی")
+    contact = "" if hide_telegram_contact else f"📞 راه تماس: {ad['contact']}\n"
     return (
-        f"{category_emoji(ad['category_name'])} {ad['title']}\n"
+        f"{category_emoji(ad['category_name'])} {public_ad_title(ad)}\n"
         f"📂 {ad['category_name']} | {kind}\n"
         f"💰 {'بودجه' if ad['ad_type'] == 'wanted' else 'قیمت'}: {format_price(ad)}\n\n"
         f"📝 توضیحات:\n{ad['description']}\n\n"
         f"📍 موقعیت: {ad['city']}\n"
-        f"📞 راه تماس: {ad['contact']}\n"
+        f"{contact}"
         f"🔖 شناسهٔ آگهی: #{ad['ad_id']}\n"
         "🏷️ بازارچه"
     )

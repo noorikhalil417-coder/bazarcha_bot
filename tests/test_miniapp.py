@@ -45,6 +45,22 @@ class AuthTests(unittest.TestCase):
         self.assertNotIn('price',extract_fields('۳۰۰۰ افغانی یا ۴۰۰۰ افغانی',categories))
         self.assertNotIn('city',extract_fields('کابل و هرات',categories))
 
+    def test_title_suggestion_preserves_request_and_does_not_invent_details(self):
+        text = 'یک گوشی سامسونگ سالم با حافظه ۱۲۸ گیگ می‌خواهم؛ بودجه ۳۰۰۰ افغانی، کابل'
+        result = extract_fields(text, [], 'wanted')
+        self.assertEqual(result['title'], 'خریدار گوشی سامسونگ')
+        self.assertEqual(result['description'], text)
+        self.assertNotIn('A22', result['title'])
+        unknown = extract_fields('برای باغ خود وسیله‌ای می‌خواهم', [], 'wanted')
+        self.assertEqual(unknown['title'], 'درخواست خرید')
+        self.assertEqual(unknown['description'], 'برای باغ خود وسیله‌ای می‌خواهم')
+        self.assertEqual(extract_fields('گوشی سامسونگ یا آیفون می‌خواهم', [], 'wanted')['title'], 'درخواست خرید')
+        self.assertEqual(extract_fields('گوشی سامسونگ نمی‌خواهم', [], 'wanted')['title'], 'درخواست خرید')
+        self.assertEqual(extract_fields('برای خانه گوشی سامسونگ می‌خواهم', [], 'wanted')['title'], 'درخواست خرید')
+        sale = extract_fields('سامسونگ A22، سالم، حافظه ۱۲۸ گیگ', [], 'sale')
+        self.assertEqual(sale['title'], 'سامسونگ A22')
+        self.assertEqual(sale['description'], 'سامسونگ A22، سالم، حافظه ۱۲۸ گیگ')
+
 class ApiTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         self.tmp=tempfile.TemporaryDirectory()
