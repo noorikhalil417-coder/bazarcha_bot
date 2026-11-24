@@ -53,6 +53,7 @@ class Config:
     group_rules: str
     mini_app_url: str = ""
     web_port: int = 8080
+    chat_reviewer_ids: frozenset[int] = frozenset()
 
     @classmethod
     def from_env(cls, environ: dict[str, str] | None = None) -> Config:
@@ -66,6 +67,12 @@ class Config:
             raise ConfigurationError("ADMIN_IDS باید فهرستی از شناسه‌های عددی باشد.") from exc
         if not admin_ids or any(user_id <= 0 for user_id in admin_ids):
             raise ConfigurationError("حداقل یک شناسهٔ مثبت مدیر در ADMIN_IDS لازم است.")
+        try:
+            chat_reviewers = frozenset(int(item.strip()) for item in values.get("CHAT_REVIEWER_IDS", "").split(",") if item.strip())
+        except ValueError as exc:
+            raise ConfigurationError("CHAT_REVIEWER_IDS باید فهرست شناسه‌های عددی باشد.") from exc
+        if not chat_reviewers.issubset(admin_ids):
+            raise ConfigurationError("بازبین‌های گفت‌وگو باید در ADMIN_IDS باشند.")
         review_mode = values.get("MODERATION_REVIEW_MODE", "required").strip().lower()
         if review_mode not in {"required", "auto"}:
             raise ConfigurationError("MODERATION_REVIEW_MODE فقط required یا auto است.")
@@ -98,4 +105,5 @@ class Config:
             group_rules=values.get("GROUP_RULES", DEFAULT_RULES),
             mini_app_url=mini_app_url,
             web_port=web_port,
+            chat_reviewer_ids=chat_reviewers,
         )

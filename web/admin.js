@@ -24,6 +24,7 @@ async function loadAdminDashboard() {
     const date = new Date(data.views_started_at);
     document.getElementById('views-started').textContent = new Intl.DateTimeFormat('fa', {dateStyle: 'medium', timeStyle: 'short'}).format(date);
     dashboard.hidden = false;
+    document.getElementById('chat-reports-section').hidden = !data.chat_review_access;
     await loadBanners();
     await loadUsers();
     await loadReferences();

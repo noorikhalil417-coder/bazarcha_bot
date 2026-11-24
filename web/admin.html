@@ -9,6 +9,7 @@
   <link rel="stylesheet" href="/admin.css">
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
   <script defer src="/admin.js"></script>
+  <script defer src="/admin-chat.js"></script>
 </head>
 <body>
   <main class="shell">
@@ -84,6 +85,14 @@
         <p id="reports-error" class="error-text" role="alert" hidden></p>
         <div id="reports-list"></div>
         <div class="banner-actions"><button type="button" id="reports-prev">صفحهٔ قبل</button><button type="button" id="reports-next">صفحهٔ بعد</button></div>
+      </section>
+      <section id="chat-reports-section" class="information" aria-labelledby="chat-reports-title" hidden>
+        <h2 id="chat-reports-title">گزارش پیام‌های خصوصی</h2>
+        <p>فقط پیام گزارش‌شده قابل مشاهده است؛ هر مشاهده ثبت می‌شود.</p>
+        <p id="chat-reports-error" class="error-text" role="alert" hidden></p>
+        <button id="chat-reports-refresh" type="button">دریافت گزارش‌ها</button>
+        <div id="chat-reports-list"></div>
+        <button id="chat-reports-more" type="button" hidden>گزارش‌های قدیمی‌تر</button>
       </section>
       <section class="information" aria-labelledby="reference-title">
         <h2 id="reference-title">دسته‌بندی‌ها و ولایت‌ها</h2>

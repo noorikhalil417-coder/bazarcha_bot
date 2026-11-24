@@ -294,7 +294,7 @@ def create_web_app(application) -> web.Application:
 
     async def static(request):
         name = request.match_info.get("name", "index.html")
-        if name not in {"index.html", "app.js", "banners.js", "style.css", "vazirmatn.woff2", "FONT-LICENSE.txt", "logo.svg", "approved-logo.png", "approved-logo-small.png", "admin.html", "admin.js", "admin.css"}:
+        if name not in {"index.html", "app.js", "banners.js", "chat.js", "chat.css", "style.css", "vazirmatn.woff2", "FONT-LICENSE.txt", "logo.svg", "approved-logo.png", "approved-logo-small.png", "admin.html", "admin.js", "admin.css", "admin-chat.js"}:
             raise web.HTTPNotFound()
         return web.FileResponse(WEB_ROOT / name)
 
@@ -308,7 +308,8 @@ def create_web_app(application) -> web.Application:
             views = conn.execute("SELECT ad_views, started_at FROM marketplace_metrics WHERE id=1").fetchone()
         return web.json_response({"users": users, "ads": ads, "pending_ads": pending, "reports": reports,
                                   "open_reports": open_reports, "ad_views": views["ad_views"],
-                                  "views_started_at": views["started_at"]})
+                                  "views_started_at": views["started_at"],
+                                  "chat_review_access": request["user"]["id"] in config.chat_reviewer_ids})
 
     async def health(request):
         return web.json_response({"ok": True})
@@ -329,6 +330,8 @@ def create_web_app(application) -> web.Application:
     register_admin_settings_routes(app, application)
     from services.admin_market import register_admin_market_routes
     register_admin_market_routes(app, application, lock, download_photo)
+    from services.chat import register_chat_routes
+    register_chat_routes(app, application, normalize_photo, download_photo)
     app.router.add_get("/api/admin/summary", admin_summary)
     app.router.add_get("/health", health)
     app.router.add_get("/api/state", state)

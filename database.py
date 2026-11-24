@@ -8,7 +8,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
 
-SCHEMA_VERSION = 12
+SCHEMA_VERSION = 13
 DEFAULT_CATEGORIES = (
     "موبایل و تکنالوژی", "موتر و وسایط", "خانه و جایداد", "لباس و لوازم شخصی",
     "لوازم خانه", "خدمات", "کار و استخدام", "حیوانات و محصولات زراعتی", "سایر موارد",
@@ -187,6 +187,63 @@ class Database:
                     )
                     connection.execute("PRAGMA user_version = 12")
                     connection.commit()
+                    version = 12
+                if version < 13:
+                    connection.executescript("""
+                        BEGIN IMMEDIATE;
+                        CREATE TABLE IF NOT EXISTS conversations (
+                            conversation_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                            ad_id INTEGER NOT NULL REFERENCES ads(ad_id),
+                            buyer_id INTEGER NOT NULL REFERENCES users(user_id),
+                            seller_id INTEGER NOT NULL REFERENCES users(user_id),
+                            created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+                            CHECK(buyer_id != seller_id),
+                            UNIQUE(ad_id,buyer_id,seller_id)
+                        );
+                        CREATE TABLE IF NOT EXISTS chat_messages (
+                            message_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                            conversation_id INTEGER NOT NULL REFERENCES conversations(conversation_id),
+                            sender_id INTEGER NOT NULL REFERENCES users(user_id),
+                            client_id TEXT NOT NULL,
+                            body TEXT NOT NULL DEFAULT '',
+                            image BLOB CHECK(image IS NULL OR length(image)<=2097152),
+                            fingerprint TEXT NOT NULL,
+                            created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+                            CHECK(length(body)>0 OR image IS NOT NULL),
+                            UNIQUE(conversation_id,sender_id,client_id)
+                        );
+                        CREATE INDEX IF NOT EXISTS chat_messages_conversation ON chat_messages(conversation_id,message_id);
+                        CREATE INDEX IF NOT EXISTS chat_messages_sender_time ON chat_messages(sender_id,created_at);
+                        CREATE TABLE IF NOT EXISTS chat_reads (
+                            conversation_id INTEGER NOT NULL REFERENCES conversations(conversation_id),
+                            user_id INTEGER NOT NULL REFERENCES users(user_id),
+                            last_message_id INTEGER NOT NULL DEFAULT 0,
+                            PRIMARY KEY(conversation_id,user_id)
+                        );
+                        CREATE TABLE IF NOT EXISTS chat_blocks (
+                            blocker_id INTEGER NOT NULL REFERENCES users(user_id),
+                            blocked_id INTEGER NOT NULL REFERENCES users(user_id),
+                            created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+                            PRIMARY KEY(blocker_id,blocked_id),
+                            CHECK(blocker_id != blocked_id)
+                        );
+                        CREATE TABLE IF NOT EXISTS chat_reports (
+                            report_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                            conversation_id INTEGER NOT NULL REFERENCES conversations(conversation_id),
+                            message_id INTEGER NOT NULL REFERENCES chat_messages(message_id),
+                            reporter_id INTEGER NOT NULL REFERENCES users(user_id),
+                            reason TEXT NOT NULL,
+                            status TEXT NOT NULL DEFAULT 'open' CHECK(status IN ('open','reviewed')),
+                            created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+                            UNIQUE(message_id,reporter_id)
+                        );
+                        CREATE TABLE IF NOT EXISTS chat_notifications (
+                            user_id INTEGER PRIMARY KEY REFERENCES users(user_id),
+                            last_sent_at TEXT NOT NULL
+                        );
+                        PRAGMA user_version = 13;
+                        COMMIT;
+                    """)
             finally:
                 connection.close()
 

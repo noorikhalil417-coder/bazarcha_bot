@@ -57,3 +57,4 @@ details input,.settings-text{font:inherit;border:1px solid #d5e2f2;border-radius
 .ad-admin-detail p{overflow-wrap:anywhere;white-space:pre-wrap}
 .admin-photo-gallery{display:flex;gap:8px;overflow:auto;margin:10px 0}
 .admin-photo-gallery img{width:120px;height:90px;object-fit:cover;border-radius:10px}
+.chat-report-image{max-width:200px;max-height:200px}
