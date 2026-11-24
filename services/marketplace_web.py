@@ -1,5 +1,4 @@
 """Authenticated marketplace browsing and owner actions for the Telegram Mini App."""
-import asyncio
 import logging
 import re
 from datetime import UTC, datetime
@@ -15,6 +14,9 @@ logger = logging.getLogger(__name__)
 async def sync_group(application, ad, action, messages, photo_count):
     ids=[(m['chat_id'],m['message_id']) for m in messages]
     if not ids and ad['publication_chat_id'] and ad['publication_message_id']:ids=[(ad['publication_chat_id'],ad['publication_message_id'])]
+    if not ids:
+        logger.warning('Group status sync unavailable: missing publication identifiers for ad %s', ad['ad_id'])
+        return False
     message={'sold':'✅ این آگهی فروخته شد.','archived':'این آگهی از دسترس خارج شد.','edit':'این آگهی برای اصلاح از دسترس خارج شد.'}[action]
     synced=True
     for chat_id,message_id in ids:
@@ -30,9 +32,8 @@ async def sync_group(application, ad, action, messages, photo_count):
     return synced
 
 
-def register_marketplace_routes(app, application):
+def register_marketplace_routes(app, application, lock):
     market = application.bot_data['marketplace']
-    lock = asyncio.Lock()
 
     def touch(user):
         market.ensure_user(user['id'], user.get('username'), user.get('first_name',''))
@@ -110,6 +111,7 @@ def register_marketplace_routes(app, application):
             remote=await application.bot.get_file(row['file_id'])
             if remote.file_size and remote.file_size>10_000_000:raise web.HTTPRequestEntityTooLarge(max_size=10_000_000,actual_size=remote.file_size)
             content=bytes(await remote.download_as_bytearray())
+            if len(content)>10_000_000:raise web.HTTPRequestEntityTooLarge(max_size=10_000_000,actual_size=len(content))
         return web.Response(body=content,content_type='image/jpeg')
 
     async def favorite(request):
@@ -156,16 +158,25 @@ def register_marketplace_routes(app, application):
             previous=dict(ad);messages=market.publication_messages(ad_id)
             with market.db.connect() as conn:photo_count=conn.execute('SELECT count(*) FROM ad_photos WHERE ad_id=?',(ad_id,)).fetchone()[0]
             if action=='edit':
+                with market.db.connect() as conn:
+                    existing=conn.execute("SELECT 1 FROM ads WHERE owner_id=? AND status='draft' AND ad_id!=?",(uid,ad_id)).fetchone()
+                if existing:raise MarketplaceError('اول پیش‌نویس موجود را تکمیل کن.')
+                if previous['status'] not in {'draft','published','rejected','expired','archived'}:raise MarketplaceError('این آگهی فعلاً قابل اصلاح نیست.')
+                if (previous['status']=='published' or messages or previous['publication_message_id']) and not await sync_group(application,previous,'edit',messages,photo_count):
+                    return web.json_response({'error':'پیام قبلی گروه به‌روز نشد؛ وضعیت آگهی تغییر نکرد. دوباره تلاش کنید.'},status=502)
                 with market.db.transaction() as conn:
                     existing=conn.execute("SELECT 1 FROM ads WHERE owner_id=? AND status='draft' AND ad_id!=?",(uid,ad_id)).fetchone()
                     if existing:raise MarketplaceError('اول پیش‌نویس موجود را تکمیل کن.')
                     current=conn.execute('SELECT status FROM ads WHERE ad_id=? AND owner_id=?',(ad_id,uid)).fetchone()
-                    if current[0] not in {'draft','published','rejected','expired','archived'}:raise MarketplaceError('این آگهی فعلاً قابل اصلاح نیست.')
+                    if not current or current[0] != previous['status']:raise MarketplaceError('وضعیت آگهی تغییر کرده است؛ دوباره تلاش کنید.')
+                    conn.execute('INSERT OR IGNORE INTO ad_publication_history(ad_id,chat_id,message_id) SELECT ad_id,chat_id,message_id FROM ad_publication_messages WHERE ad_id=?',(ad_id,))
+                    if previous['publication_chat_id'] and previous['publication_message_id']:
+                        conn.execute('INSERT OR IGNORE INTO ad_publication_history(ad_id,chat_id,message_id) VALUES(?,?,?)',(ad_id,previous['publication_chat_id'],previous['publication_message_id']))
                     conn.execute("UPDATE ads SET status='draft',publication_chat_id=NULL,publication_message_id=NULL,published_at=NULL,publish_claimed_at=NULL,review_note=NULL,miniapp_revision=miniapp_revision+1,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE ad_id=?",(ad_id,))
                     conn.execute('DELETE FROM ad_publication_messages WHERE ad_id=?',(ad_id,))
             elif action in {'sold','archived'}:market.owner_action(ad_id,uid,action)
             else:raise MarketplaceError('این کار مجاز نیست.')
-        synced=await sync_group(application,previous,action,messages,photo_count) if previous['status']=='published' else True
+            synced=await sync_group(application,previous,action,messages,photo_count) if action != 'edit' and previous['status']=='published' else True
         return web.json_response({'ok':True,'group_synced':synced})
 
     async def report(request):

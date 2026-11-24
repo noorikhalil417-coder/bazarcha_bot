@@ -1,3 +1,4 @@
+import asyncio
 import base64
 import io
 from pathlib import Path
@@ -5,6 +6,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 from PIL import Image
+from telegram.error import TimedOut
 from database import SCHEMA_VERSION
 from services.backup import create_backup
 from services.marketplace import Marketplace
@@ -124,6 +126,14 @@ class MarketplaceWebTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(await response.read(), b'photo')
         self.bot.get_file.assert_awaited_once_with('legacy-three')
 
+    async def test_legacy_photo_download_size_is_checked_when_metadata_is_missing(self):
+        draft = await (await self.put()).json()
+        self.market.add_photo(draft['ad_id'], 100, 'legacy-photo')
+        remote = SimpleNamespace(file_size=None, download_as_bytearray=AsyncMock(return_value=bytearray(10_000_001)))
+        self.bot.get_file = AsyncMock(return_value=remote)
+        response = await self.client.get(f"/api/ad/{draft['ad_id']}/photo/0", headers=self.headers())
+        self.assertEqual(response.status, 413)
+
     async def test_favorites_persist_are_private_and_idempotent(self):
         ad_id=await self.publish_ad()
         for _ in range(2):
@@ -145,6 +155,50 @@ class MarketplaceWebTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((await self.client.get(f'/api/ad/{ad_id}',headers=self.headers(200))).status,404)
         self.market.submit(ad_id,100);self.assertEqual(self.market.get_ad(ad_id)['status'],'pending')
         self.bot.edit_message_caption.assert_awaited_once()
+
+    async def test_owner_edit_keeps_publication_on_group_failure_and_records_history_on_retry(self):
+        ad_id = await self.publish_ad(with_photo=True)
+        self.bot.edit_message_caption.side_effect = TimedOut()
+        response = await self.client.post('/api/owner-action', json={'ad_id':ad_id,'action':'edit'}, headers=self.headers())
+        self.assertEqual(response.status, 502)
+        self.assertEqual(self.market.get_ad(ad_id)['status'], 'published')
+        self.assertEqual(self.market.get_ad(ad_id)['publication_message_id'], 700 + ad_id)
+        self.bot.edit_message_caption.side_effect = None
+        response = await self.client.post('/api/owner-action', json={'ad_id':ad_id,'action':'edit'}, headers=self.headers())
+        self.assertEqual(response.status, 200)
+        self.assertEqual(self.market.get_ad(ad_id)['status'], 'draft')
+        with self.db.connect() as conn:
+            row = conn.execute('SELECT chat_id,message_id FROM ad_publication_history WHERE ad_id=?', (ad_id,)).fetchone()
+        self.assertEqual(tuple(row), (-1001234567890, 700 + ad_id))
+
+    async def test_missing_group_identity_does_not_clear_publication_id(self):
+        ad_id = await self.publish_ad()
+        with self.db.transaction() as conn:
+            conn.execute('DELETE FROM ad_publication_messages WHERE ad_id=?', (ad_id,))
+            conn.execute('UPDATE ads SET publication_chat_id=NULL WHERE ad_id=?', (ad_id,))
+        response = await self.client.post('/api/owner-action', json={'ad_id':ad_id,'action':'edit'}, headers=self.headers())
+        self.assertEqual(response.status, 502)
+        self.assertEqual(self.market.get_ad(ad_id)['publication_message_id'], 700 + ad_id)
+        self.assertEqual(self.market.get_ad(ad_id)['status'], 'published')
+
+    async def test_owner_and_admin_group_updates_are_serialized(self):
+        ad_id = await self.publish_ad()
+        started, release = asyncio.Event(), asyncio.Event()
+        async def edit_message(**kwargs):
+            if not started.is_set():
+                started.set()
+                await release.wait()
+        self.bot.edit_message_text.side_effect = edit_message
+        owner = asyncio.create_task(self.client.post('/api/owner-action', json={'ad_id':ad_id,'action':'archived'}, headers=self.headers()))
+        await asyncio.wait_for(started.wait(), 2)
+        admin = asyncio.create_task(self.client.post(f'/api/admin/ads/{ad_id}/action', json={'action':'restore'}, headers=self.headers(41)))
+        await asyncio.sleep(.05)
+        self.assertFalse(admin.done())
+        release.set()
+        self.assertEqual((await owner).status, 200)
+        self.assertEqual((await admin).status, 200)
+        self.assertEqual(self.market.get_ad(ad_id)['status'], 'draft')
+        self.assertEqual(self.bot.edit_message_text.await_count, 2)
 
     async def test_city_and_notifications_are_scoped(self):
         ad_id=await self.publish_ad()

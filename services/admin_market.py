@@ -1,6 +1,5 @@
 """Web administration of existing marketplace moderation workflows."""
 
-import asyncio
 import logging
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
@@ -14,10 +13,9 @@ from services.marketplace_web import sync_group
 logger = logging.getLogger(__name__)
 
 
-def register_admin_market_routes(app, application):
+def register_admin_market_routes(app, application, lock):
     market = application.bot_data["marketplace"]
     db = market.db
-    lock = asyncio.Lock()
 
     def page(request):
         return max(0, min(int(request.query.get("page", "0")), 10000))

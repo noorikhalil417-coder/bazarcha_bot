@@ -280,7 +280,7 @@ def create_web_app(application) -> web.Application:
 
     async def static(request):
         name = request.match_info.get("name", "index.html")
-        if name not in {"index.html", "app.js", "banners.js", "style.css", "vazirmatn.woff2", "FONT-LICENSE.txt", "logo.svg", "approved-logo.png", "admin.html", "admin.js", "admin.css"}:
+        if name not in {"index.html", "app.js", "banners.js", "style.css", "vazirmatn.woff2", "FONT-LICENSE.txt", "logo.svg", "approved-logo.png", "approved-logo-small.png", "admin.html", "admin.js", "admin.css"}:
             raise web.HTTPNotFound()
         return web.FileResponse(WEB_ROOT / name)
 
@@ -300,7 +300,8 @@ def create_web_app(application) -> web.Application:
         return web.json_response({"ok": True})
 
     from services.marketplace_web import register_marketplace_routes
-    register_marketplace_routes(app, application)
+    market_action_lock = asyncio.Lock()
+    register_marketplace_routes(app, application, market_action_lock)
     from services.banners import register_banner_routes
     register_banner_routes(app, application, normalize_photo)
     from services.admin_users import register_user_routes
@@ -308,7 +309,7 @@ def create_web_app(application) -> web.Application:
     from services.admin_settings import register_admin_settings_routes
     register_admin_settings_routes(app, application)
     from services.admin_market import register_admin_market_routes
-    register_admin_market_routes(app, application)
+    register_admin_market_routes(app, application, market_action_lock)
     app.router.add_get("/api/admin/summary", admin_summary)
     app.router.add_get("/health", health)
     app.router.add_get("/api/state", state)

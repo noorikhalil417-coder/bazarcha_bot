@@ -85,7 +85,14 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
         response = await self.client.get('/approved-logo.png')
         self.assertEqual(response.status, 200)
         self.assertEqual(response.content_type, 'image/png')
-        self.assertEqual((await response.read())[:8], b'\x89PNG\r\n\x1a\n')
+        original = await response.read()
+        self.assertEqual(original[:8], b'\x89PNG\r\n\x1a\n')
+        response = await self.client.get('/approved-logo-small.png')
+        self.assertEqual(response.status, 200)
+        small = await response.read()
+        self.assertLess(len(small), len(original))
+        with Image.open(io.BytesIO(small)) as image:
+            self.assertGreaterEqual(min(image.size), 64)
 
     async def test_atomic_draft_owner_revision_and_idempotent_submit(self):
         response=await self.put();self.assertEqual(response.status,200);draft=await response.json()
