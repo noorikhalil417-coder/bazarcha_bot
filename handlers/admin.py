@@ -16,6 +16,7 @@ from telegram import (
     InputMediaPhoto,
     LinkPreviewOptions,
     Update,
+    WebAppInfo,
 )
 from telegram.error import TelegramError
 from telegram.ext import CallbackQueryHandler, CommandHandler, ContextTypes
@@ -53,11 +54,14 @@ async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     if not user or not _is_admin(context, user.id):
         await render(update, context, "شما اجازهٔ دسترسی به پنل مدیر را ندارید.")
         return
-    await render(update, context, "پنل مدیریت دوکانچه:", reply_markup=_dashboard())
+    await render(update, context, "پنل مدیریت دوکانچه:", reply_markup=_dashboard(context, update))
 
 
-def _dashboard() -> InlineKeyboardMarkup:
+def _dashboard(context=None, update=None) -> InlineKeyboardMarkup:
     rows = [[InlineKeyboardButton(label, callback_data=f"admin:{key}") for key, label in SECTIONS[index:index + 2]] for index in range(0, len(SECTIONS), 2)]
+    url = context.application.bot_data["config"].mini_app_url if context else ""
+    if url and getattr(getattr(update, "effective_chat", None), "type", None) == "private":
+        rows.insert(0, [InlineKeyboardButton("📊 داشبورد وب", web_app=WebAppInfo(url + "/admin.html"))])
     rows.append([InlineKeyboardButton("🏠 منوی اصلی", callback_data="menu:home")])
     return InlineKeyboardMarkup(rows)
 
@@ -108,7 +112,7 @@ async def _dashboard_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
     await query.answer()
     section = query.data.partition(":")[2]
     if section == "home":
-        await render(update, context, "پنل مدیریت دوکانچه:", reply_markup=_dashboard())
+        await render(update, context, "پنل مدیریت دوکانچه:", reply_markup=_dashboard(context, update))
         return
     known = dict(SECTIONS)
     if section not in known:

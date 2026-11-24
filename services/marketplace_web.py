@@ -75,7 +75,11 @@ def register_marketplace_routes(app, application):
         uid=request['user']['id'];ad=visible(int(request.match_info['ad_id']),uid)
         from handlers.admin import _group_message_url
         url=_group_message_url(ad['publication_chat_id'],ad['publication_message_id']) if ad['publication_chat_id'] and ad['publication_message_id'] else None
-        return web.json_response({**card(ad,uid),'description':ad['description'],'contact':ad['contact'],'group_url':url,'review_note':ad['review_note'] if ad['owner_id']==uid else ''})
+        result={**card(ad,uid),'description':ad['description'],'contact':ad['contact'],'group_url':url,'review_note':ad['review_note'] if ad['owner_id']==uid else ''}
+        if ad['status']=='published':
+            with market.db.transaction() as conn:
+                conn.execute('UPDATE marketplace_metrics SET ad_views=ad_views+1 WHERE id=1')
+        return web.json_response(result)
 
     async def photo(request):
         ad=visible(int(request.match_info['ad_id']),request['user']['id'])

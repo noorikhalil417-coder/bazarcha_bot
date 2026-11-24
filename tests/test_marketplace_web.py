@@ -47,6 +47,46 @@ class MarketplaceWebTests(unittest.IsolatedAsyncioTestCase):
             with self.subTest(path=path):
                 self.assertEqual((await self.client.post(path, json={})).status, 401)
 
+    async def test_admin_summary_requires_signed_administrator_and_counts_real_views(self):
+        path = '/api/admin/summary'
+        self.assertEqual((await self.client.get(path)).status, 401)
+        self.assertEqual((await self.client.get(path, headers=self.headers(100))).status, 403)
+        self.assertEqual((await self.client.get(path, headers={'Authorization': 'tma ' + miniapp_tests.signed(41).replace('test_seller', 'intruder')})).status, 401)
+        ad_id = await self.publish_ad()
+        await self.put({**self.body, 'title': 'پیش‌نویس'}, 200)
+        private_id = self.market.draft_for_user(200)['ad_id']
+        self.assertEqual((await self.client.get(f'/api/ad/{private_id}', headers=self.headers(100))).status, 404)
+        self.assertEqual((await self.client.get(f'/api/ad/{private_id}', headers=self.headers(200))).status, 200)
+        self.assertEqual((await self.client.get(f'/api/ad/{ad_id}', headers=self.headers(200))).status, 200)
+        summary = await (await self.client.get(path, headers=self.headers(41))).json()
+        self.assertEqual(summary['ad_views'], 1)
+        self.assertEqual(summary['ads'], 2)
+        self.assertEqual(summary['users'], 3)
+        self.assertEqual(summary['reports'], 0)
+        self.assertTrue(summary['views_started_at'])
+
+    async def test_v7_migration_preserves_data_and_starts_view_counter_once(self):
+        ad_id = await self.publish_ad(with_photo=True)
+        photos = self.market.photos(ad_id)
+        with self.db.transaction() as conn:
+            conn.execute('DROP TABLE marketplace_metrics')
+            conn.execute('PRAGMA user_version=7')
+        self.db.initialize()
+        await self.client.get(f'/api/ad/{ad_id}', headers=self.headers(200))
+        self.db.initialize()
+        self.assertEqual(self.market.photos(ad_id), photos)
+        self.assertEqual(self.market.get_ad(ad_id)['status'], 'published')
+        with self.db.connect() as conn:
+            self.assertEqual(conn.execute('SELECT ad_views FROM marketplace_metrics').fetchone()[0], 1)
+            self.assertEqual(conn.execute('PRAGMA integrity_check').fetchone()[0], 'ok')
+            self.assertEqual(conn.execute('PRAGMA user_version').fetchone()[0], SCHEMA_VERSION)
+
+    async def test_admin_summary_is_rate_limited(self):
+        headers = self.headers(41)
+        for _ in range(90):
+            self.assertEqual((await self.client.get('/api/admin/summary', headers=headers)).status, 200)
+        self.assertEqual((await self.client.get('/api/admin/summary', headers=headers)).status, 429)
+
     async def test_marketplace_search_filters_and_private_drafts(self):
         ad_id=await self.publish_ad(with_photo=True)
         await self.put({**self.body,'title':'پیش‌نویس پنهان'},200)

@@ -45,6 +45,17 @@ class AuthTests(unittest.TestCase):
         self.assertNotIn('price',extract_fields('۳۰۰۰ افغانی یا ۴۰۰۰ افغانی',categories))
         self.assertNotIn('city',extract_fields('کابل و هرات',categories))
 
+    def test_admin_dashboard_link_only_appears_in_private_chat(self):
+        from handlers.admin import _dashboard
+        config = Config.from_env({'TELEGRAM_BOT_TOKEN': TOKEN, 'ADMIN_IDS': '41', 'MINI_APP_URL': 'https://bazaar.example'})
+        context = SimpleNamespace(application=SimpleNamespace(bot_data={'config': config}))
+        private = SimpleNamespace(effective_chat=SimpleNamespace(type='private'))
+        group = SimpleNamespace(effective_chat=SimpleNamespace(type='supergroup'))
+        private_buttons = [button for row in _dashboard(context, private).inline_keyboard for button in row]
+        group_buttons = [button for row in _dashboard(context, group).inline_keyboard for button in row]
+        self.assertEqual(private_buttons[0].web_app.url, 'https://bazaar.example/admin.html')
+        self.assertFalse(any(button.web_app for button in group_buttons))
+
 class ApiTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         self.tmp=tempfile.TemporaryDirectory()

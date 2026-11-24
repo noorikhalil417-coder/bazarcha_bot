@@ -130,6 +130,8 @@ def create_web_app(application) -> web.Application:
                     rates.popitem(last=False)
                 if count >= 90:
                     return web.json_response({"error": "کمی صبر کنید و دوباره تلاش کنید."}, status=429)
+                if request.path.startswith("/api/admin/") and user["id"] not in config.admin_ids:
+                    return web.json_response({"error": "دسترسی مدیر لازم است."}, status=403)
             response = await handler(request)
         except MarketplaceError as exc:
             response = web.json_response({"error": str(exc)}, status=400)
@@ -271,15 +273,28 @@ def create_web_app(application) -> web.Application:
 
     async def static(request):
         name = request.match_info.get("name", "index.html")
-        if name not in {"index.html", "app.js", "style.css", "vazirmatn.woff2", "FONT-LICENSE.txt", "logo.svg", "approved-logo.png"}:
+        if name not in {"index.html", "app.js", "style.css", "vazirmatn.woff2", "FONT-LICENSE.txt", "logo.svg", "approved-logo.png", "admin.html", "admin.js", "admin.css"}:
             raise web.HTTPNotFound()
         return web.FileResponse(WEB_ROOT / name)
+
+    async def admin_summary(request):
+        with market.db.connect() as conn:
+            users = conn.execute("SELECT count(*) FROM users").fetchone()[0]
+            ads = conn.execute("SELECT count(*) FROM ads").fetchone()[0]
+            pending = conn.execute("SELECT count(*) FROM ads WHERE status='pending'").fetchone()[0]
+            reports = conn.execute("SELECT count(*) FROM reports").fetchone()[0]
+            open_reports = conn.execute("SELECT count(*) FROM reports WHERE status='open'").fetchone()[0]
+            views = conn.execute("SELECT ad_views, started_at FROM marketplace_metrics WHERE id=1").fetchone()
+        return web.json_response({"users": users, "ads": ads, "pending_ads": pending, "reports": reports,
+                                  "open_reports": open_reports, "ad_views": views["ad_views"],
+                                  "views_started_at": views["started_at"]})
 
     async def health(request):
         return web.json_response({"ok": True})
 
     from services.marketplace_web import register_marketplace_routes
     register_marketplace_routes(app, application)
+    app.router.add_get("/api/admin/summary", admin_summary)
     app.router.add_get("/health", health)
     app.router.add_get("/api/state", state)
     app.router.add_post("/api/extract", extract)

@@ -8,7 +8,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
 
-SCHEMA_VERSION = 7
+SCHEMA_VERSION = 8
 DEFAULT_CATEGORIES = (
     "موبایل و تکنالوژی", "موتر و وسایط", "خانه و جایداد", "لباس و لوازم شخصی",
     "لوازم خانه", "خدمات", "کار و استخدام", "حیوانات و محصولات زراعتی", "سایر موارد",
@@ -117,6 +117,17 @@ class Database:
                         "CREATE TABLE IF NOT EXISTS private_panel_messages (chat_id INTEGER NOT NULL, user_id INTEGER NOT NULL, message_id INTEGER NOT NULL, PRIMARY KEY(chat_id,message_id))"
                     )
                     connection.execute("PRAGMA user_version = 7")
+                    connection.commit()
+                    version = 7
+                if version < 8:
+                    connection.execute("BEGIN IMMEDIATE")
+                    connection.execute(
+                        "CREATE TABLE IF NOT EXISTS marketplace_metrics "
+                        "(id INTEGER PRIMARY KEY CHECK(id=1), ad_views INTEGER NOT NULL DEFAULT 0, "
+                        "started_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')))"
+                    )
+                    connection.execute("INSERT OR IGNORE INTO marketplace_metrics(id) VALUES(1)")
+                    connection.execute("PRAGMA user_version = 8")
                     connection.commit()
             finally:
                 connection.close()

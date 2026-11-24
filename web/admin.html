@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="fa" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#f5f8fc">
+  <title>داشبورد مدیریت | دوکانچه</title>
+  <link rel="icon" type="image/png" href="/approved-logo.png">
+  <link rel="stylesheet" href="/admin.css">
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <script defer src="/admin.js"></script>
+</head>
+<body>
+  <main class="shell">
+    <header class="header">
+      <div><span class="wordmark" dir="ltr">dokancha</span><span class="header-divider"></span><span class="header-label">مدیریت دوکانچه</span></div>
+      <button id="refresh" type="button">به‌روزرسانی</button>
+    </header>
+    <section class="intro">
+      <div>
+        <p class="eyebrow">پنل مدیریت</p>
+        <h1>نمای کلی دوکانچه</h1>
+        <p>آمار ثبت‌شدهٔ دوکانچه در یک نگاه</p>
+      </div>
+      <div class="intro-mark" aria-hidden="true">د</div>
+    </section>
+    <p id="error" class="notice error" role="alert" hidden></p>
+    <p id="loading" class="notice" role="status">در حال دریافت آمار…</p>
+    <section id="dashboard" hidden aria-label="آمار دوکانچه">
+      <div class="section-title"><h2>آمار کلی</h2><span>داده‌های واقعی</span></div>
+      <div class="cards">
+        <article class="card"><span class="card-icon" aria-hidden="true">◉</span><div><h3>کاربران</h3><strong id="users"></strong><p>کاربران ثبت‌شده</p></div></article>
+        <article class="card"><span class="card-icon" aria-hidden="true">▤</span><div><h3>آگهی‌ها</h3><strong id="ads"></strong><p><span id="pending-ads"></span> در انتظار بررسی</p></div></article>
+        <article class="card"><span class="card-icon" aria-hidden="true">◌</span><div><h3>بازدید آگهی‌ها</h3><strong id="views"></strong><p>دفعات بازشدن جزئیات</p></div></article>
+        <article class="card"><span class="card-icon" aria-hidden="true">⚑</span><div><h3>گزارش‌ها</h3><strong id="reports"></strong><p><span id="open-reports"></span> گزارش باز</p></div></article>
+      </div>
+      <div class="information">
+        <h2>دربارهٔ آمار بازدید</h2>
+        <p>هر بار بازشدن جزئیات یک آگهی نشرشده در مینی‌اپ یک بازدید شمرده می‌شود؛ این عدد تعداد افراد یکتا نیست.</p>
+        <p>شمارش از <time id="views-started"></time> آغاز شده است؛ اطلاعات پیش از آن در دسترس نیست.</p>
+      </div>
+      <div class="information">
+        <h2>مدیریت دوکانچه</h2>
+        <p>امکانات مدیریت فعلی همچنان در پنل مدیر ربات در دسترس‌اند. امکانات مدیریتی وب در حال توسعه‌اند.</p>
+      </div>
+    </section>
+    <footer>دوکانچه · پنل مدیریت</footer>
+  </main>
+</body>
+</html>
