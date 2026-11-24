@@ -371,7 +371,7 @@ class GateTests(unittest.IsolatedAsyncioTestCase):
         for label in (
             "🔎 جست‌وجوی آگهی‌ها",
             "📂 دسته‌بندی آگهی‌ها",
-            "📋 قوانین بازارچه",
+            "📋 قوانین دوکانچه",
             "🎡 بازی چرخک",
         ):
             self.assertIn(label, labels)

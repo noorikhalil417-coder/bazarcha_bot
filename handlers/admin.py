@@ -16,11 +16,13 @@ from telegram import (
     InputMediaPhoto,
     LinkPreviewOptions,
     Update,
+    WebAppInfo,
 )
 from telegram.error import TelegramError
 from telegram.ext import CallbackQueryHandler, CommandHandler, ContextTypes
 
 from handlers.panel import render
+from services.action_locks import serialized
 from services.backup import create_backup, restore_backup
 from services.marketplace import Marketplace, MarketplaceError, format_public_ad
 
@@ -53,11 +55,14 @@ async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     if not user or not _is_admin(context, user.id):
         await render(update, context, "شما اجازهٔ دسترسی به پنل مدیر را ندارید.")
         return
-    await render(update, context, "پنل مدیریت بازارچه:", reply_markup=_dashboard())
+    await render(update, context, "پنل مدیریت دوکانچه:", reply_markup=_dashboard(context, update))
 
 
-def _dashboard() -> InlineKeyboardMarkup:
+def _dashboard(context=None, update=None) -> InlineKeyboardMarkup:
     rows = [[InlineKeyboardButton(label, callback_data=f"admin:{key}") for key, label in SECTIONS[index:index + 2]] for index in range(0, len(SECTIONS), 2)]
+    url = context.application.bot_data["config"].mini_app_url if context else ""
+    if url and getattr(getattr(update, "effective_chat", None), "type", None) == "private":
+        rows.insert(0, [InlineKeyboardButton("📊 داشبورد وب", web_app=WebAppInfo(url + "/admin.html"))])
     rows.append([InlineKeyboardButton("🏠 منوی اصلی", callback_data="menu:home")])
     return InlineKeyboardMarkup(rows)
 
@@ -108,7 +113,7 @@ async def _dashboard_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
     await query.answer()
     section = query.data.partition(":")[2]
     if section == "home":
-        await render(update, context, "پنل مدیریت بازارچه:", reply_markup=_dashboard())
+        await render(update, context, "پنل مدیریت دوکانچه:", reply_markup=_dashboard(context, update))
         return
     known = dict(SECTIONS)
     if section not in known:
@@ -270,6 +275,7 @@ async def _dashboard_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
     await render(update, context, text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode="HTML")
 
 
+@serialized("market")
 async def _admin_action(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     if not _is_admin(context, query.from_user.id):
@@ -355,7 +361,7 @@ async def _publish_ad(context: ContextTypes.DEFAULT_TYPE, ad_id: int, admin_id: 
             message = await context.bot.send_message(config.publication_chat_id, "<b>" + html.escape(details.split("\n", 1)[0]) + "</b>\n" + html.escape(details.partition("\n")[2]), reply_markup=publication_buttons, parse_mode="HTML", link_preview_options=LinkPreviewOptions(is_disabled=True))
             market.finish_publication(ad_id, message.message_id, config.publication_chat_id)
         try:
-            await context.bot.send_message(ad["owner_id"], f"آگهی {ad_id} در بازارچه نشر شد.")
+            await context.bot.send_message(ad["owner_id"], f"آگهی {ad_id} در دوکانچه نشر شد.")
         except TelegramError as exc:
             logger.info("Publication completed but owner notification failed for ad %s: %s", ad_id, type(exc).__name__)
     except TelegramError as exc:
@@ -517,7 +523,7 @@ async def _backup_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     try:
         path = await asyncio.to_thread(create_backup, context.application.bot_data["database"], config.backup_directory)
         with path.open("rb") as backup_file:
-            await query.message.reply_document(backup_file, filename=path.name, caption="پشتیبان دیتابیس بازارچه؛ در محل امن نگهداری شود.")
+            await query.message.reply_document(backup_file, filename=path.name, caption="پشتیبان دیتابیس دوکانچه؛ در محل امن نگهداری شود.")
     except (OSError, ValueError, sqlite3.Error) as exc:
         logger.warning("Backup failed: %s", type(exc).__name__)
         await query.message.reply_text("ساخت پشتیبان انجام نشد. مدیر سیستم باید دسترسی پوشه را بررسی کند.")
@@ -579,6 +585,7 @@ async def unmute_user(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         logger.warning("Unmute failed: %s", type(exc).__name__); await update.effective_message.reply_text("رفع محدودیت انجام نشد؛ دسترسی مدیر ربات را بررسی کنید.")
 
 
+@serialized("user_block")
 async def ban_user(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not _is_admin(context, update.effective_user.id): await update.effective_message.reply_text("این فرمان برای مدیران است."); return
     target = _target_args(update, context); group_id = context.application.bot_data["config"].group_id
@@ -591,10 +598,16 @@ async def ban_user(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         logger.warning("Ban failed: %s", type(exc).__name__); await update.effective_message.reply_text("بیرون‌کردن انجام نشد؛ دسترسی مدیر ربات را بررسی کنید.")
 
 
+@serialized("user_block")
 async def unban_user(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not _is_admin(context, update.effective_user.id): await update.effective_message.reply_text("این فرمان برای مدیران است."); return
     target = _target_args(update, context); group_id = context.application.bot_data["config"].group_id
     if not target or not group_id: await update.effective_message.reply_text("کاربرد: /unban شناسه_کاربر (و تنظیم GROUP_ID)"); return
+    with context.application.bot_data["database"].connect() as conn:
+        blocked = conn.execute("SELECT 1 FROM blocked_users WHERE user_id=?", (target,)).fetchone()
+    if blocked:
+        await update.effective_message.reply_text("این حساب در پنل وب مسدود است؛ برای رفع مسدودی همهٔ بخش‌ها از پنل وب استفاده کنید.")
+        return
     try:
         await context.bot.unban_chat_member(group_id, target, only_if_banned=True)
         context.application.bot_data["moderation"].record_action(target, update.effective_user.id, "unban")
@@ -687,7 +700,7 @@ async def backup_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     try:
         path = await asyncio.to_thread(create_backup, context.application.bot_data["database"], config.backup_directory)
         with path.open("rb") as backup_file:
-            await update.effective_message.reply_document(backup_file, filename=path.name, caption="پشتیبان امن دیتابیس بازارچه.")
+            await update.effective_message.reply_document(backup_file, filename=path.name, caption="پشتیبان امن دیتابیس دوکانچه.")
     except (OSError, ValueError, sqlite3.Error) as exc:
         logger.warning("Backup failed: %s", type(exc).__name__); await update.effective_message.reply_text("ساخت پشتیبان انجام نشد.")
 
@@ -760,6 +773,7 @@ async def moderation_history(update: Update, context: ContextTypes.DEFAULT_TYPE)
     await update.effective_message.reply_text(f"سابقهٔ کاربر {user_id}:\n{details}")
 
 
+@serialized("market")
 async def restore_ad(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not _is_admin(context, update.effective_user.id):
         await update.effective_message.reply_text("این فرمان برای مدیران است.")
@@ -774,6 +788,7 @@ async def restore_ad(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         await update.effective_message.reply_text(str(exc))
 
 
+@serialized("market")
 async def retry_publication(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not _is_admin(context, update.effective_user.id):
         await update.effective_message.reply_text("این فرمان برای مدیران است.")
@@ -790,6 +805,7 @@ async def retry_publication(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     await _publish_ad(context, ad_id, update.effective_user.id, manual_retry=True)
 
 
+@serialized("market")
 async def confirm_partial_publication(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not _is_admin(context, update.effective_user.id):
         await update.effective_message.reply_text("این فرمان برای مدیران است.")
@@ -805,6 +821,7 @@ async def confirm_partial_publication(update: Update, context: ContextTypes.DEFA
         await update.effective_message.reply_text(str(exc))
 
 
+@serialized("market")
 async def publish_approved(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not _is_admin(context, update.effective_user.id):
         await update.effective_message.reply_text("این فرمان برای مدیران است.")

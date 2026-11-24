@@ -8,10 +8,17 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
 
-SCHEMA_VERSION = 7
+SCHEMA_VERSION = 14
 DEFAULT_CATEGORIES = (
     "موبایل و تکنالوژی", "موتر و وسایط", "خانه و جایداد", "لباس و لوازم شخصی",
     "لوازم خانه", "خدمات", "کار و استخدام", "حیوانات و محصولات زراعتی", "سایر موارد",
+)
+AFGHAN_PROVINCES = (
+    "ارزگان", "بادغیس", "بامیان", "بدخشان", "بغلان", "بلخ", "پروان", "پکتیا",
+    "پکتیکا", "پنجشیر", "تخار", "جوزجان", "دایکندی", "زابل", "سرپل", "سمنگان",
+    "غزنی", "غور", "فاریاب", "فراه", "کابل", "کاپیسا", "کندز", "کندهار",
+    "کنر", "خوست", "لغمان", "لوگر", "میدان وردک", "ننگرهار", "نورستان",
+    "نیمروز", "هرات", "هلمند",
 )
 
 
@@ -74,7 +81,7 @@ class Database:
                     connection.execute("BEGIN IMMEDIATE")
                     connection.execute("ALTER TABLE ads ADD COLUMN expiry_notified_at TEXT")
                     connection.execute("INSERT OR IGNORE INTO settings(key,value) VALUES('rules','با احترام رفتار کنید. آگهی نادرست، تکراری و محتوای خلاف قانون مجاز نیست.')")
-                    connection.execute("INSERT OR IGNORE INTO settings(key,value) VALUES('welcome_message','به بازارچه خوش آمدید! برای ثبت یا جست‌وجوی آگهی از منوی ربات استفاده کنید.')")
+                    connection.execute("INSERT OR IGNORE INTO settings(key,value) VALUES('welcome_message','به دوکانچه خوش آمدید! برای ثبت یا جست‌وجوی آگهی از منوی ربات استفاده کنید.')")
                     connection.execute("INSERT OR IGNORE INTO settings(key,value) VALUES('blocked_phrases','')")
                     connection.execute("INSERT OR IGNORE INTO settings(key,value) VALUES('links_allowed','1')")
                     connection.execute("INSERT OR IGNORE INTO settings(key,value) VALUES('review_mode','required')")
@@ -118,6 +125,147 @@ class Database:
                     )
                     connection.execute("PRAGMA user_version = 7")
                     connection.commit()
+                    version = 7
+                if version < 8:
+                    connection.execute("BEGIN IMMEDIATE")
+                    connection.execute(
+                        "CREATE TABLE IF NOT EXISTS marketplace_metrics "
+                        "(id INTEGER PRIMARY KEY CHECK(id=1), ad_views INTEGER NOT NULL DEFAULT 0, "
+                        "started_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')))"
+                    )
+                    connection.execute("INSERT OR IGNORE INTO marketplace_metrics(id) VALUES(1)")
+                    connection.execute("PRAGMA user_version = 8")
+                    connection.commit()
+                    version = 8
+                if version < 9:
+                    connection.execute("BEGIN IMMEDIATE")
+                    connection.execute(
+                        "CREATE TABLE IF NOT EXISTS banners ("
+                        "banner_id INTEGER PRIMARY KEY AUTOINCREMENT, "
+                        "placement TEXT NOT NULL CHECK(placement IN ('home','browse')), "
+                        "title TEXT NOT NULL, url TEXT NOT NULL DEFAULT '', "
+                        "image BLOB NOT NULL CHECK(length(image)<=2097152), "
+                        "starts_at INTEGER, ends_at INTEGER, "
+                        "enabled INTEGER NOT NULL DEFAULT 0 CHECK(enabled IN (0,1)), "
+                        "sort_order INTEGER NOT NULL DEFAULT 0, "
+                        "CHECK(starts_at IS NULL OR ends_at IS NULL OR starts_at<ends_at))"
+                    )
+                    connection.execute("PRAGMA user_version = 9")
+                    connection.commit()
+                    version = 9
+                if version < 10:
+                    connection.execute("BEGIN IMMEDIATE")
+                    connection.execute(
+                        "CREATE TABLE IF NOT EXISTS blocked_users ("
+                        "user_id INTEGER PRIMARY KEY REFERENCES users(user_id), "
+                        "admin_id INTEGER NOT NULL, reason TEXT NOT NULL, "
+                        "group_synced INTEGER NOT NULL DEFAULT 0 CHECK(group_synced IN (0,1)), "
+                        "created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')))"
+                    )
+                    connection.execute("PRAGMA user_version = 10")
+                    connection.commit()
+                    version = 10
+                if version < 11:
+                    connection.execute("BEGIN IMMEDIATE")
+                    connection.execute(
+                        "CREATE TABLE IF NOT EXISTS provinces ("
+                        "province_id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL UNIQUE, "
+                        "enabled INTEGER NOT NULL DEFAULT 1 CHECK(enabled IN (0,1)), sort_order INTEGER NOT NULL DEFAULT 0)"
+                    )
+                    connection.executemany("INSERT OR IGNORE INTO provinces(name,sort_order) VALUES(?,?)",
+                                           [(name, index) for index, name in enumerate(AFGHAN_PROVINCES)])
+                    connection.execute("PRAGMA user_version = 11")
+                    connection.commit()
+                    version = 11
+                if version < 12:
+                    connection.execute("BEGIN IMMEDIATE")
+                    connection.execute(
+                        "CREATE TABLE IF NOT EXISTS ad_publication_history ("
+                        "ad_id INTEGER NOT NULL REFERENCES ads(ad_id), chat_id INTEGER NOT NULL, "
+                        "message_id INTEGER NOT NULL, archived_at TEXT NOT NULL DEFAULT "
+                        "(strftime('%Y-%m-%dT%H:%M:%fZ','now')), PRIMARY KEY(ad_id,chat_id,message_id))"
+                    )
+                    connection.execute("PRAGMA user_version = 12")
+                    connection.commit()
+                    version = 12
+                if version < 13:
+                    connection.executescript("""
+                        BEGIN IMMEDIATE;
+                        CREATE TABLE IF NOT EXISTS conversations (
+                            conversation_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                            ad_id INTEGER NOT NULL REFERENCES ads(ad_id),
+                            buyer_id INTEGER NOT NULL REFERENCES users(user_id),
+                            seller_id INTEGER NOT NULL REFERENCES users(user_id),
+                            created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+                            CHECK(buyer_id != seller_id),
+                            UNIQUE(ad_id,buyer_id,seller_id)
+                        );
+                        CREATE TABLE IF NOT EXISTS chat_messages (
+                            message_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                            conversation_id INTEGER NOT NULL REFERENCES conversations(conversation_id),
+                            sender_id INTEGER NOT NULL REFERENCES users(user_id),
+                            client_id TEXT NOT NULL,
+                            body TEXT NOT NULL DEFAULT '',
+                            image BLOB CHECK(image IS NULL OR length(image)<=2097152),
+                            fingerprint TEXT NOT NULL,
+                            created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+                            CHECK(length(body)>0 OR image IS NOT NULL),
+                            UNIQUE(conversation_id,sender_id,client_id)
+                        );
+                        CREATE INDEX IF NOT EXISTS chat_messages_conversation ON chat_messages(conversation_id,message_id);
+                        CREATE INDEX IF NOT EXISTS chat_messages_sender_time ON chat_messages(sender_id,created_at);
+                        CREATE TABLE IF NOT EXISTS chat_reads (
+                            conversation_id INTEGER NOT NULL REFERENCES conversations(conversation_id),
+                            user_id INTEGER NOT NULL REFERENCES users(user_id),
+                            last_message_id INTEGER NOT NULL DEFAULT 0,
+                            PRIMARY KEY(conversation_id,user_id)
+                        );
+                        CREATE TABLE IF NOT EXISTS chat_blocks (
+                            blocker_id INTEGER NOT NULL REFERENCES users(user_id),
+                            blocked_id INTEGER NOT NULL REFERENCES users(user_id),
+                            created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+                            PRIMARY KEY(blocker_id,blocked_id),
+                            CHECK(blocker_id != blocked_id)
+                        );
+                        CREATE TABLE IF NOT EXISTS chat_reports (
+                            report_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                            conversation_id INTEGER NOT NULL REFERENCES conversations(conversation_id),
+                            message_id INTEGER NOT NULL REFERENCES chat_messages(message_id),
+                            reporter_id INTEGER NOT NULL REFERENCES users(user_id),
+                            reason TEXT NOT NULL,
+                            status TEXT NOT NULL DEFAULT 'open' CHECK(status IN ('open','reviewed')),
+                            created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+                            UNIQUE(message_id,reporter_id)
+                        );
+                        CREATE TABLE IF NOT EXISTS chat_notifications (
+                            user_id INTEGER PRIMARY KEY REFERENCES users(user_id),
+                            last_sent_at TEXT NOT NULL
+                        );
+                        PRAGMA user_version = 13;
+                        COMMIT;
+                    """)
+                    version = 13
+                if version < 14:
+                    connection.executescript("""
+                        BEGIN IMMEDIATE;
+                        CREATE TABLE IF NOT EXISTS chat_notification_outbox (
+                            user_id INTEGER PRIMARY KEY REFERENCES users(user_id),
+                            latest_message_id INTEGER NOT NULL REFERENCES chat_messages(message_id),
+                            state TEXT NOT NULL DEFAULT 'pending' CHECK(state IN ('pending','inflight','failed')),
+                            attempts INTEGER NOT NULL DEFAULT 0,
+                            next_attempt TEXT NOT NULL,
+                            last_error TEXT
+                        );
+                        CREATE INDEX IF NOT EXISTS chat_notification_due ON chat_notification_outbox(state,next_attempt);
+                        CREATE TABLE IF NOT EXISTS chat_notification_control (
+                            id INTEGER PRIMARY KEY CHECK(id=1),
+                            not_before TEXT NOT NULL
+                        );
+                        INSERT OR IGNORE INTO chat_notification_control(id,not_before)
+                        VALUES(1,'1970-01-01T00:00:00.000Z');
+                        PRAGMA user_version = 14;
+                        COMMIT;
+                    """)
             finally:
                 connection.close()
 

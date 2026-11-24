@@ -123,7 +123,7 @@ async def warn_member(context, chat_id: int, user, reason: str):
         rows.append([InlineKeyboardButton("👥 لینک دعوت و وضعیت من", url=invite_url)])
     else:
         text = f"{mention}، ثبت آگهی فروش، درخواست خرید و معرفی خدمات از مینی‌اپ انجام می‌شود؛ پس از تأیید مدیر در گروه نشر می‌شود."
-    rows.append([InlineKeyboardButton("🛍 ثبت آگهی در بازارچه", url=app_url)])
+    rows.append([InlineKeyboardButton("🛍 ثبت آگهی در دوکانچه", url=app_url)])
     try:
         sent = await context.bot.send_message(
             chat_id, text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(rows)
@@ -298,7 +298,7 @@ async def invite_status(update: Update, context):
     user = update.effective_user
     if config.group_id is None:
         await render(update, context,
-            "گروه بازارچه هنوز توسط مدیر تنظیم نشده است."
+            "گروه دوکانچه هنوز توسط مدیر تنظیم نشده است."
         )
         return
     p = policy(context)
@@ -332,7 +332,7 @@ async def invite_status(update: Update, context):
         return
     if not member_present(member):
         await render(update, context,
-            "ابتدا عضو گروه بازارچه شو؛ سپس لینک دعوت اختصاصی دریافت کن."
+            "ابتدا عضو گروه دوکانچه شو؛ سپس لینک دعوت اختصاصی دریافت کن."
         )
         return
     count = p.count(config.group_id, user.id)
@@ -421,7 +421,7 @@ async def admin_gate_callback(update: Update, context):
         return
     if not config.group_id:
         await query.answer()
-        await render(update, context, "ابتدا GROUP_ID را برای گروه بازارچه تنظیم کنید.")
+        await render(update, context, "ابتدا GROUP_ID را برای گروه دوکانچه تنظیم کنید.")
         return
     if query.data != "gate:panel":
         _, field, mode = query.data.split(":")

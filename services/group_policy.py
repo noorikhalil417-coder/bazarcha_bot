@@ -114,6 +114,15 @@ class GroupPolicy:
                 (admin_id, "group_policy", f"{chat_id}:{field}:{int(enabled)}"),
             )
 
+    def set_required_invites(self, chat_id: int, count: int, admin_id: int):
+        if type(count) is not int or not 1 <= count <= 20:
+            raise ValueError("Invalid invite count")
+        with self.db.transaction() as conn:
+            conn.execute("INSERT OR IGNORE INTO group_policies(chat_id) VALUES(?)", (chat_id,))
+            conn.execute("UPDATE group_policies SET required_invites=? WHERE chat_id=?", (count, chat_id))
+            conn.execute("INSERT INTO admin_actions(admin_id,action,target) VALUES(?,?,?)",
+                         (admin_id, "group_policy", f"{chat_id}:required_invites:{count}"))
+
     def seen(self, chat_id: int, user_id: int):
         with self.db.transaction() as c:
             c.execute(

@@ -17,6 +17,7 @@ from telegram.ext import (
     ChatMemberHandler,
     ContextTypes,
     MessageHandler,
+    TypeHandler,
     filters,
 )
 
@@ -169,11 +170,13 @@ async def _handle_join_request(update: Update, context: ContextTypes.DEFAULT_TYP
 
 
 async def _scheduled_tasks(context: ContextTypes.DEFAULT_TYPE) -> None:
+    from services.action_locks import action_lock
     market: Marketplace = context.application.bot_data["marketplace"]
     database: Database = context.application.bot_data["database"]
     config: Config = context.application.bot_data["config"]
     try:
-        expired = await asyncio.to_thread(market.expire_ads)
+        async with action_lock(context.application, "market"):
+            expired = await asyncio.to_thread(market.expire_ads)
         if expired:
             logger.info("Expired advertisements: %s", expired)
         rows = await asyncio.to_thread(market.due_expiry_notifications)
@@ -222,9 +225,14 @@ async def _error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> 
 
 async def _post_init(application: Application) -> None:
     from services.miniapp import start_server
+    from services.chat_notifications import NotificationWorker, notification_job, recover_inflight
+    if not application.job_queue:
+        raise RuntimeError("صف اعلان پیام‌رسان به job queue نیاز دارد.")
+    recover_inflight(application.bot_data["database"])
+    application.bot_data["chat_notification_worker"] = NotificationWorker(application.bot_data["database"], application.bot)
     await start_server(application)
-    if application.job_queue:
-        application.job_queue.run_repeating(_scheduled_tasks, interval=3600, first=30, name="marketplace-maintenance")
+    application.job_queue.run_repeating(_scheduled_tasks, interval=3600, first=30, name="marketplace-maintenance")
+    application.job_queue.run_repeating(notification_job, interval=10, first=1, name="chat-notifications")
 
 
 async def _post_shutdown(application: Application) -> None:
@@ -243,6 +251,8 @@ def build_application(config: Config, database: Database | None = None) -> Appli
     application.bot_data["group_policy"] = GroupPolicy(db)
     application.bot_data["publish_ad"] = _publish_ad
     application.bot_data["notify_group_review"] = _notify_group_review
+    from services.admin_users import blocked_user_guard
+    application.add_handler(TypeHandler(Update, blocked_user_guard), group=-4)
     application.add_handler(CallbackQueryHandler(reject_stale_panel_callback), group=-3)
     from handlers.group_gate import install_prehandlers, handlers as group_handlers
     install_prehandlers(application)

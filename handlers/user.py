@@ -19,6 +19,7 @@ from telegram.ext import (
     filters,
 )
 
+from services.action_locks import serialized
 from services.marketplace import Marketplace, MarketplaceError, category_emoji, format_price, parse_price_input
 
 CATEGORY, AD_TYPE, TITLE, DESCRIPTION, PRICE, CITY, CONTACT, PHOTOS, CONFIRM = range(9)
@@ -49,11 +50,11 @@ def _ad_status_label(ad) -> str:
 
 
 def _main_menu(context=None, update=None) -> tuple[str, InlineKeyboardMarkup]:
-    text = "به بازارچه خوش آمدید! از گزینه‌های زیر انتخاب کنید:"
+    text = "به دوکانچه خوش آمدید! از گزینه‌های زیر انتخاب کنید:"
     buttons = [
         [InlineKeyboardButton("🔎 جست‌وجوی آگهی‌ها", callback_data="menu:search")],
         [InlineKeyboardButton("📂 دسته‌بندی آگهی‌ها", callback_data="menu:categories"),
-         InlineKeyboardButton("📋 قوانین بازارچه", callback_data="menu:rules")],
+         InlineKeyboardButton("📋 قوانین دوکانچه", callback_data="menu:rules")],
         [InlineKeyboardButton("📋 آگهی‌های من", callback_data="own:list:0")],
         [InlineKeyboardButton("💬 کمک و همکاری", callback_data="menu:help")],
         [InlineKeyboardButton("🎡 بازی چرخک", url=CHARKHAK_URL)],
@@ -61,7 +62,7 @@ def _main_menu(context=None, update=None) -> tuple[str, InlineKeyboardMarkup]:
     if context and update and getattr(getattr(update, "effective_chat", None), "type", None) == "private":
         url = context.application.bot_data["config"].mini_app_url
         if url:
-            buttons.insert(0, [InlineKeyboardButton("✨ بازارچه | ثبت آسان آگهی", web_app=WebAppInfo(url))])
+            buttons.insert(0, [InlineKeyboardButton("✨ دوکانچه | ثبت آسان آگهی", web_app=WebAppInfo(url))])
     return text, InlineKeyboardMarkup(buttons)
 
 
@@ -116,7 +117,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 async def rules(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     text = effective_rules(context)
     await render(update, context,
-        "📋 مقررات بازارچه:\n" + text,
+        "📋 مقررات دوکانچه:\n" + text,
         reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🏠 منوی اصلی", callback_data="menu:home")]]),
     )
 
@@ -143,7 +144,7 @@ async def _begin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         bot = await context.bot.get_me()
         await render(update, context,
             "برای ثبت آگهی، مینی‌اپ را در چت خصوصی باز کن.",
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🛍 ورود به بازارچه", url=f"https://t.me/{bot.username}?start=menu")]]),
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🛍 ورود به دوکانچه", url=f"https://t.me/{bot.username}?start=menu")]]),
         )
         return ConversationHandler.END
     _touch(update, context)
@@ -187,6 +188,7 @@ async def _select_category(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     return AD_TYPE
 
 
+@serialized("market")
 async def _select_type(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query
     await query.answer()
@@ -219,6 +221,7 @@ async def _save_text(update: Update, context: ContextTypes.DEFAULT_TYPE, field: 
     return next_state
 
 
+@serialized("market")
 async def _title(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     if len(update.effective_message.text.strip()) > 120:
         await render(update, context, "عنوان باید حداکثر ۱۲۰ نویسه باشد. کوتاه‌تر بنویسید.", reply_markup=_wizard_buttons("type"))
@@ -226,6 +229,7 @@ async def _title(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     return await _save_text(update, context, "title", DESCRIPTION, "تشریح آگهی را بنویسید؛ تا ۳۰۰۰ نویسه.", "title")
 
 
+@serialized("market")
 async def _description(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     if len(update.effective_message.text.strip()) > 3000:
         await render(update, context, "تشریح باید حداکثر ۳۰۰۰ نویسه باشد.", reply_markup=_wizard_buttons("title"))
@@ -233,6 +237,7 @@ async def _description(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
     return await _save_text(update, context, "description", PRICE, "قیمت را به افغانی بنویسید؛ نمونه: «۳۰۰۰ افغانی» یا «۳ هزار». برای جورآمد/توافقی همان عبارت را بنویسید.", "description")
 
 
+@serialized("market")
 async def _price(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     draft = _current_draft(update, context)
     if not draft:
@@ -250,10 +255,12 @@ async def _price(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     return CITY
 
 
+@serialized("market")
 async def _city(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     return await _save_text(update, context, "city", CONTACT, "راه تماس مورد تأیید برای نشر عمومی را بنویسید.", "city")
 
 
+@serialized("market")
 async def _contact(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     result = await _save_text(update, context, "contact", PHOTOS, "عکس‌های آگهی را بفرستید (حداکثر ۱۰ عکس). اگر عکس ندارید، دکمهٔ «پایان عکس‌ها» را بزنید.", "contact")
     if result == PHOTOS:
@@ -262,6 +269,7 @@ async def _contact(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     return result
 
 
+@serialized("market")
 async def _photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     draft = _current_draft(update, context)
     if not draft:
@@ -309,6 +317,7 @@ async def _show_confirmation(update: Update, context: ContextTypes.DEFAULT_TYPE,
     return CONFIRM if draft else ConversationHandler.END
 
 
+@serialized("market")
 async def _edit_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query
     await query.answer()
@@ -355,6 +364,7 @@ async def _edit_field(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
     return EDIT_VALUE
 
 
+@serialized("market")
 async def _edit_value(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     ad_id = context.user_data.get("edit_ad_id")
     field = context.user_data.get("edit_field")
@@ -383,6 +393,7 @@ async def _edit_done(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     return await _show_confirmation(update, context, query=True)
 
 
+@serialized("market")
 async def _submit(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query
     await query.answer()
@@ -406,6 +417,7 @@ async def _submit(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     return ConversationHandler.END
 
 
+@serialized("market")
 async def _cancel_draft(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query
     await query.answer()
@@ -423,6 +435,7 @@ async def _cancel_draft(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
     return ConversationHandler.END
 
 
+@serialized("market")
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     draft = _current_draft(update, context)
     if draft:
@@ -517,6 +530,7 @@ async def my_ads_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         await _my_ad_detail(update, context, int(parts[2]), int(parts[3]))
 
 
+@serialized("market")
 async def owner_action(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     await query.answer()
@@ -709,7 +723,7 @@ async def navigation(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     elif query.data == "menu:rules":
         text = effective_rules(context)
         await render(update, context,
-            "📋 مقررات بازارچه:\n" + text,
+            "📋 مقررات دوکانچه:\n" + text,
             reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🏠 منوی اصلی", callback_data="menu:home")]]),
         )
     elif query.data == "menu:help":

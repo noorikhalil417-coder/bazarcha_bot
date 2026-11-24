@@ -20,10 +20,13 @@ from aiohttp import web
 from PIL import Image, ImageOps, UnidentifiedImageError
 
 from services.marketplace import MarketplaceError, parse_price_input, validate_ad
+from services.action_locks import action_lock
+from services.telegram_media import download_telegram_photo
 
 logger = logging.getLogger(__name__)
 WEB_ROOT = Path(__file__).resolve().parents[1] / "web"
 Image.MAX_IMAGE_PIXELS = 16_000_000
+PREAUTH_REQUESTS_PER_MINUTE = 3000
 
 
 def validate_init_data(raw: str, token: str, now: int | None = None) -> dict:
@@ -101,13 +104,24 @@ def normalize_photo(encoded: str) -> bytes:
 def create_web_app(application) -> web.Application:
     market = application.bot_data["marketplace"]
     config = application.bot_data["config"]
-    lock = asyncio.Lock()
+    lock = action_lock(application, "market")
     rates: OrderedDict = OrderedDict()
+    peer_rates: OrderedDict = OrderedDict()
 
     @web.middleware
     async def security(request, handler):
         try:
             if request.path.startswith("/api/"):
+                now = time.monotonic()
+                peer = request.remote or "unknown"
+                count, started = peer_rates.pop(peer, (0, now))
+                if now - started >= 60:
+                    count, started = 0, now
+                peer_rates[peer] = (count + 1, started)
+                if len(peer_rates) > 5000:
+                    peer_rates.popitem(last=False)
+                if count >= PREAUTH_REQUESTS_PER_MINUTE:
+                    return web.json_response({"error": "درخواست‌های زیادی ارسال شده است؛ کمی صبر کنید."}, status=429)
                 auth = request.headers.get("Authorization", "")
                 try:
                     user = validate_init_data(auth.removeprefix("tma ") if auth.startswith("tma ") else "", config.token)
@@ -130,6 +144,13 @@ def create_web_app(application) -> web.Application:
                     rates.popitem(last=False)
                 if count >= 90:
                     return web.json_response({"error": "کمی صبر کنید و دوباره تلاش کنید."}, status=429)
+                if user["id"] not in config.admin_ids:
+                    with market.db.connect() as conn:
+                        blocked = conn.execute("SELECT 1 FROM blocked_users WHERE user_id=?", (user["id"],)).fetchone()
+                    if blocked:
+                        return web.json_response({"error": "دسترسی این حساب مسدود شده است."}, status=403)
+                if request.path.startswith("/api/admin/") and user["id"] not in config.admin_ids:
+                    return web.json_response({"error": "دسترسی مدیر لازم است."}, status=403)
             response = await handler(request)
         except MarketplaceError as exc:
             response = web.json_response({"error": str(exc)}, status=400)
@@ -157,7 +178,9 @@ def create_web_app(application) -> web.Application:
 
     async def state(request):
         user = request["user"]
-        return web.json_response({"user": {"name": user.get("first_name", "دوست عزیز"), "username": user.get("username", "")}, "categories": [dict(row) for row in market.categories()], "draft": draft_payload(market.draft_for_user(user["id"])), "ads": application.bot_data["miniapp_cards"](user["id"]), "profile": application.bot_data["miniapp_profile"](user["id"]), "rules": market.get_setting("rules", config.group_rules)})
+        with market.db.connect() as conn:
+            provinces = [row[0] for row in conn.execute("SELECT name FROM provinces WHERE enabled=1 ORDER BY sort_order,province_id")]
+        return web.json_response({"user": {"name": user.get("first_name", "دوست عزیز"), "username": user.get("username", "")}, "categories": [dict(row) for row in market.categories()], "provinces": provinces, "draft": draft_payload(market.draft_for_user(user["id"])), "ads": application.bot_data["miniapp_cards"](user["id"]), "profile": application.bot_data["miniapp_profile"](user["id"]), "rules": market.get_setting("rules", config.group_rules)})
 
     async def extract(request):
         body = await request.json()
@@ -264,22 +287,52 @@ def create_web_app(application) -> web.Application:
         context = SimpleNamespace(application=application, bot=application.bot)
         await notify_ad_reviewers(context, ad_id)
         try:
-            await application.bot.send_message(owner_id, f"✅ آگهی <b>#{ad_id}</b> برای بررسی مدیر فرستاده شد.\nپس از تأیید در بازارچه نشر می‌شود.", parse_mode="HTML")
+            await application.bot.send_message(owner_id, f"✅ آگهی <b>#{ad_id}</b> برای بررسی مدیر فرستاده شد.\nپس از تأیید در دوکانچه نشر می‌شود.", parse_mode="HTML")
         except Exception as exc:
             logger.info("Mini App confirmation unavailable: %s", type(exc).__name__)
         return web.json_response({"ad_id": ad_id, "status": "pending"})
 
     async def static(request):
         name = request.match_info.get("name", "index.html")
-        if name not in {"index.html", "app.js", "style.css", "vazirmatn.woff2", "FONT-LICENSE.txt", "logo.svg"}:
+        if name not in {"index.html", "app.js", "banners.js", "chat.js", "chat.css", "style.css", "vazirmatn.woff2", "FONT-LICENSE.txt", "logo.svg", "approved-logo.png", "approved-logo-small.png", "admin.html", "admin.js", "admin.css", "admin-chat.js"}:
             raise web.HTTPNotFound()
         return web.FileResponse(WEB_ROOT / name)
+
+    async def admin_summary(request):
+        with market.db.connect() as conn:
+            users = conn.execute("SELECT count(*) FROM users").fetchone()[0]
+            ads = conn.execute("SELECT count(*) FROM ads").fetchone()[0]
+            pending = conn.execute("SELECT count(*) FROM ads WHERE status='pending'").fetchone()[0]
+            reports = conn.execute("SELECT count(*) FROM reports").fetchone()[0]
+            open_reports = conn.execute("SELECT count(*) FROM reports WHERE status='open'").fetchone()[0]
+            views = conn.execute("SELECT ad_views, started_at FROM marketplace_metrics WHERE id=1").fetchone()
+        return web.json_response({"users": users, "ads": ads, "pending_ads": pending, "reports": reports,
+                                  "open_reports": open_reports, "ad_views": views["ad_views"],
+                                  "views_started_at": views["started_at"],
+                                  "chat_review_access": request["user"]["id"] in config.chat_reviewer_ids})
 
     async def health(request):
         return web.json_response({"ok": True})
 
     from services.marketplace_web import register_marketplace_routes
-    register_marketplace_routes(app, application)
+    media_downloads = asyncio.Semaphore(4)
+
+    async def download_photo(file_id):
+        async with media_downloads:
+            return await download_telegram_photo(application.bot, file_id)
+
+    register_marketplace_routes(app, application, lock, download_photo)
+    from services.banners import register_banner_routes
+    register_banner_routes(app, application, normalize_photo)
+    from services.admin_users import register_user_routes
+    register_user_routes(app, application)
+    from services.admin_settings import register_admin_settings_routes
+    register_admin_settings_routes(app, application)
+    from services.admin_market import register_admin_market_routes
+    register_admin_market_routes(app, application, lock, download_photo)
+    from services.chat import register_chat_routes
+    register_chat_routes(app, application, normalize_photo, download_photo)
+    app.router.add_get("/api/admin/summary", admin_summary)
     app.router.add_get("/health", health)
     app.router.add_get("/api/state", state)
     app.router.add_post("/api/extract", extract)
