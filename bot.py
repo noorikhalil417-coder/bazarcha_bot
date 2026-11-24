@@ -225,9 +225,14 @@ async def _error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> 
 
 async def _post_init(application: Application) -> None:
     from services.miniapp import start_server
+    from services.chat_notifications import NotificationWorker, notification_job, recover_inflight
+    if not application.job_queue:
+        raise RuntimeError("صف اعلان پیام‌رسان به job queue نیاز دارد.")
+    recover_inflight(application.bot_data["database"])
+    application.bot_data["chat_notification_worker"] = NotificationWorker(application.bot_data["database"], application.bot)
     await start_server(application)
-    if application.job_queue:
-        application.job_queue.run_repeating(_scheduled_tasks, interval=3600, first=30, name="marketplace-maintenance")
+    application.job_queue.run_repeating(_scheduled_tasks, interval=3600, first=30, name="marketplace-maintenance")
+    application.job_queue.run_repeating(notification_job, interval=10, first=1, name="chat-notifications")
 
 
 async def _post_shutdown(application: Application) -> None:

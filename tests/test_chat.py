@@ -5,15 +5,18 @@ import uuid
 import unittest
 from dataclasses import replace
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from aiohttp.test_utils import TestClient, TestServer
 from PIL import Image
-from telegram.error import Forbidden
+from telegram.error import Forbidden, NetworkError, RetryAfter
 
 import test_miniapp as fixtures
 import test_marketplace_web as market_fixtures
-from database import Database
+from database import Database, SCHEMA_VERSION
 from services.backup import create_backup, restore_backup
+from services.chat_notifications import NotificationWorker, recover_inflight
 from services.miniapp import create_web_app
 
 
@@ -157,7 +160,7 @@ class ChatTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_v12_migration_retains_old_data_without_creating_messages(self):
         with self.db.transaction() as conn:
-            for table in ('chat_reports', 'chat_notifications', 'chat_blocks', 'chat_reads', 'chat_messages', 'conversations'):
+            for table in ('chat_notification_control', 'chat_notification_outbox', 'chat_reports', 'chat_notifications', 'chat_blocks', 'chat_reads', 'chat_messages', 'conversations'):
                 conn.execute(f'DROP TABLE {table}')
             conn.execute('PRAGMA user_version=12')
         self.db.initialize()
@@ -166,14 +169,17 @@ class ChatTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(self.market.photos(self.ad)), 1)
         with self.db.connect() as conn:
             self.assertEqual(conn.execute('SELECT count(*) FROM chat_messages').fetchone()[0], 0)
-            self.assertEqual(conn.execute('PRAGMA user_version').fetchone()[0], 13)
+            self.assertEqual(conn.execute('PRAGMA user_version').fetchone()[0], SCHEMA_VERSION)
 
     async def test_migration_backup_restore_and_failed_notification(self):
         cid = await self.start()
         self.bot.send_message.side_effect = Forbidden('not started')
         response = await self.send(cid, 200)
         self.assertEqual(response.status, 200)
-        self.assertFalse((await response.json())['notified'])
+        self.assertTrue((await response.json())['notification_queued'])
+        await NotificationWorker(self.db, self.bot).run()
+        with self.db.connect() as conn:
+            self.assertEqual(conn.execute("SELECT state FROM chat_notification_outbox").fetchone()[0], 'failed')
         backup = create_backup(self.db, Path(self.tmp.name)/'backups')
         restored = Database(Path(self.tmp.name)/'restored.sqlite3')
         restored.initialize()
@@ -181,4 +187,94 @@ class ChatTests(unittest.IsolatedAsyncioTestCase):
         restored.initialize()
         with restored.connect() as conn:
             self.assertEqual(conn.execute('SELECT body FROM chat_messages WHERE conversation_id=?', (cid,)).fetchone()[0], 'سلام')
+            self.assertEqual(conn.execute('SELECT state FROM chat_notification_outbox').fetchone()[0], 'failed')
             self.assertEqual(conn.execute('PRAGMA integrity_check').fetchone()[0], 'ok')
+
+    async def test_durable_retry_coalescing_and_cooldown(self):
+        cid = await self.start()
+        await self.send(cid, 200, text='اول')
+        await self.send(cid, 200, text='دوم')
+        worker = NotificationWorker(self.db, self.bot)
+        self.bot.send_message.side_effect = NetworkError('offline')
+        await worker.run()
+        with self.db.connect() as conn:
+            row = conn.execute('SELECT state,attempts,last_error FROM chat_notification_outbox').fetchone()
+            self.assertEqual(tuple(row), ('pending', 1, 'NetworkError'))
+            self.assertEqual(conn.execute('SELECT count(*) FROM chat_notification_outbox').fetchone()[0], 1)
+        self.bot.send_message.side_effect = None
+        await worker.run()
+        self.assertEqual(self.bot.send_message.await_count, 1)
+        with self.db.transaction() as conn:
+            conn.execute("UPDATE chat_notification_outbox SET next_attempt='2000-01-01T00:00:00.000Z'")
+        await worker.run()
+        self.assertEqual(self.bot.send_message.await_count, 2)
+        with self.db.connect() as conn:
+            self.assertEqual(conn.execute('SELECT count(*) FROM chat_notification_outbox').fetchone()[0], 0)
+        await self.send(cid, 200, text='سوم')
+        await worker.run()
+        self.assertEqual(self.bot.send_message.await_count, 2)
+
+    async def test_restart_recovery_and_retry_after(self):
+        cid = await self.start()
+        await self.send(cid, 200)
+        await self.send(cid, 100, text='پاسخ')
+        worker = NotificationWorker(self.db, self.bot)
+        self.bot.send_message.side_effect = RetryAfter(120)
+        await worker.run()
+        await worker.run()
+        self.assertEqual(self.bot.send_message.await_count, 1)
+        with self.db.transaction() as conn:
+            row = conn.execute("SELECT state,attempts,(julianday(next_attempt)-julianday('now'))*86400 FROM chat_notification_outbox WHERE attempts=1").fetchone()
+            self.assertEqual((row[0], row[1]), ('pending', 1))
+            self.assertGreater(row[2], 110)
+            conn.execute("UPDATE chat_notification_outbox SET state='inflight' WHERE attempts=1")
+        recover_inflight(self.db)
+        with self.db.connect() as conn:
+            row = conn.execute("SELECT state,last_error,(julianday(next_attempt)-julianday('now'))*86400 FROM chat_notification_outbox WHERE attempts=1").fetchone()
+            self.assertEqual((row[0], row[1]), ('pending', 'interrupted'))
+            self.assertGreater(row[2], 290)
+
+    async def test_message_arriving_during_delivery_stays_queued(self):
+        cid = await self.start()
+        await self.send(cid, 200, text='اول')
+        worker = NotificationWorker(self.db, self.bot)
+        async def send_and_receive(*args):
+            await self.send(cid, 200, text='دوم')
+        self.bot.send_message.side_effect = send_and_receive
+        await worker.run()
+        with self.db.connect() as conn:
+            row = conn.execute("SELECT state,latest_message_id FROM chat_notification_outbox").fetchone()
+            self.assertEqual(row['state'], 'pending')
+            self.assertEqual(row['latest_message_id'], conn.execute('SELECT max(message_id) FROM chat_messages').fetchone()[0])
+
+    async def test_v13_migration_preserves_message_and_existing_cooldown(self):
+        cid = await self.start()
+        await self.send(cid, 200)
+        with self.db.transaction() as conn:
+            conn.execute('DROP TABLE chat_notification_outbox')
+            conn.execute('DROP TABLE chat_notification_control')
+            conn.execute("INSERT INTO chat_notifications(user_id,last_sent_at) VALUES(100,strftime('%Y-%m-%dT%H:%M:%fZ','now'))")
+            conn.execute('PRAGMA user_version=13')
+        self.db.initialize()
+        await self.send(cid, 200, text='بعد')
+        with self.db.connect() as conn:
+            self.assertEqual(conn.execute('SELECT count(*) FROM chat_messages').fetchone()[0], 2)
+            self.assertEqual(conn.execute('SELECT count(*) FROM chat_notification_control').fetchone()[0], 1)
+            delay = conn.execute("SELECT (julianday(next_attempt)-julianday('now'))*86400 FROM chat_notification_outbox").fetchone()[0]
+            self.assertGreater(delay, 290)
+
+    async def test_startup_schedules_worker_and_recovers_inflight(self):
+        from bot import _post_init
+        cid = await self.start()
+        await self.send(cid, 200)
+        with self.db.transaction() as conn:
+            conn.execute("UPDATE chat_notification_outbox SET state='inflight'")
+        app = SimpleNamespace(bot_data={'database': self.db}, bot=self.bot, job_queue=MagicMock())
+        with patch('services.miniapp.start_server', new_callable=AsyncMock) as start:
+            await _post_init(app)
+        start.assert_awaited_once_with(app)
+        self.assertIn('chat_notification_worker', app.bot_data)
+        self.assertEqual({call.kwargs['name'] for call in app.job_queue.run_repeating.call_args_list},
+                         {'chat-notifications', 'marketplace-maintenance'})
+        with self.db.connect() as conn:
+            self.assertEqual(conn.execute('SELECT state FROM chat_notification_outbox').fetchone()[0], 'pending')

@@ -2,16 +2,12 @@
 
 import asyncio
 import hashlib
-import logging
 import re
 import sqlite3
 
 from aiohttp import web
-from telegram.error import TelegramError
-
 from services.marketplace import MarketplaceError, format_price
-
-logger = logging.getLogger(__name__)
+from services.chat_notifications import enqueue
 
 
 def register_chat_routes(app, application, normalize_photo, download_photo):
@@ -146,7 +142,6 @@ def register_chat_routes(app, application, normalize_photo, download_photo):
         else:
             image = None
         fingerprint = hashlib.sha256(text.encode() + b"\0" + (image or b"")).hexdigest()
-        notify = False
         with db.transaction() as conn:
             row = participant(conn, cid, uid)
             peer = other(row, uid)
@@ -172,21 +167,8 @@ def register_chat_routes(app, application, normalize_photo, download_photo):
                 "INSERT INTO chat_messages(conversation_id,sender_id,client_id,body,image,fingerprint) VALUES(?,?,?,?,?,?)",
                 (cid, uid, key, text, image, fingerprint),
             ).lastrowid
-            notify = conn.execute(
-                "INSERT INTO chat_notifications(user_id,last_sent_at) VALUES(?,strftime('%Y-%m-%dT%H:%M:%fZ','now')) "
-                "ON CONFLICT(user_id) DO UPDATE SET last_sent_at=excluded.last_sent_at "
-                "WHERE last_sent_at<strftime('%Y-%m-%dT%H:%M:%fZ','now','-5 minutes')",
-                (peer,),
-            ).rowcount == 1
-        notified = None
-        if notify:
-            try:
-                await application.bot.send_message(peer, "پیام تازه‌ای در دوکانچه دارید. برای دیدن آن مینی‌اپ را باز کنید.")
-                notified = True
-            except TelegramError as exc:
-                logger.info("Chat notification failed for user %s: %s", peer, type(exc).__name__)
-                notified = False
-        return web.json_response({"message_id": message_id, "duplicate": False, "notified": notified})
+            enqueue(conn, peer, message_id)
+        return web.json_response({"message_id": message_id, "duplicate": False, "notification_queued": True})
 
     async def read(request):
         uid, cid = request["user"]["id"], int(request.match_info["cid"])

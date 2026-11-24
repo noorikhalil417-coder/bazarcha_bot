@@ -207,12 +207,11 @@
         if (active !== cid || current !== 'conversation') return;
         pending = {text:$('chat-text').value, image, client_id:crypto.randomUUID()};
       }
-      const result = await api(`chat/${cid}/messages`, 'POST', pending);
+      await api(`chat/${cid}/messages`, 'POST', pending);
       if (active !== cid || current !== 'conversation') return;
       pending = null;
       $('chat-form').reset();
       await loadConversation();
-      if (result.notified === false) toast('پیام ذخیره شد؛ ارسال اعلان تلگرام ناموفق بود.');
     } catch (error) { toast(error.message + (pending ? '؛ برای تلاش دوباره ارسال را بزنید.' : '')); }
     finally { button.disabled = false; }
   };

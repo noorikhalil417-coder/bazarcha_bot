@@ -8,7 +8,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
 
-SCHEMA_VERSION = 13
+SCHEMA_VERSION = 14
 DEFAULT_CATEGORIES = (
     "موبایل و تکنالوژی", "موتر و وسایط", "خانه و جایداد", "لباس و لوازم شخصی",
     "لوازم خانه", "خدمات", "کار و استخدام", "حیوانات و محصولات زراعتی", "سایر موارد",
@@ -242,6 +242,28 @@ class Database:
                             last_sent_at TEXT NOT NULL
                         );
                         PRAGMA user_version = 13;
+                        COMMIT;
+                    """)
+                    version = 13
+                if version < 14:
+                    connection.executescript("""
+                        BEGIN IMMEDIATE;
+                        CREATE TABLE IF NOT EXISTS chat_notification_outbox (
+                            user_id INTEGER PRIMARY KEY REFERENCES users(user_id),
+                            latest_message_id INTEGER NOT NULL REFERENCES chat_messages(message_id),
+                            state TEXT NOT NULL DEFAULT 'pending' CHECK(state IN ('pending','inflight','failed')),
+                            attempts INTEGER NOT NULL DEFAULT 0,
+                            next_attempt TEXT NOT NULL,
+                            last_error TEXT
+                        );
+                        CREATE INDEX IF NOT EXISTS chat_notification_due ON chat_notification_outbox(state,next_attempt);
+                        CREATE TABLE IF NOT EXISTS chat_notification_control (
+                            id INTEGER PRIMARY KEY CHECK(id=1),
+                            not_before TEXT NOT NULL
+                        );
+                        INSERT OR IGNORE INTO chat_notification_control(id,not_before)
+                        VALUES(1,'1970-01-01T00:00:00.000Z');
+                        PRAGMA user_version = 14;
                         COMMIT;
                     """)
             finally:
