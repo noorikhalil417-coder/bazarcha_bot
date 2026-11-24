@@ -305,9 +305,12 @@ class Marketplace:
 
     def transition(self, ad_id: int, new_status: str, admin_id: int | None = None, note: str = "") -> None:
         with self.db.transaction() as conn:
-            row = conn.execute("SELECT status, owner_id FROM ads WHERE ad_id=?", (ad_id,)).fetchone()
+            row = conn.execute("SELECT status, owner_id, publication_chat_id, publication_message_id FROM ads WHERE ad_id=?", (ad_id,)).fetchone()
             if not row or new_status not in TRANSITIONS.get(row["status"], set()):
                 raise MarketplaceError("وضعیت آگهی تغییر کرده یا این کار مجاز نیست.")
+            if new_status == "draft" and (row["publication_chat_id"] or row["publication_message_id"] or
+                    conn.execute("SELECT 1 FROM ad_publication_messages WHERE ad_id=?", (ad_id,)).fetchone()):
+                raise MarketplaceError("برای بازیابی آگهی نشرشده و همگام‌سازی گروه از پنل وب استفاده کنید.")
             conn.execute("UPDATE ads SET status=?, review_note=?, updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE ad_id=?", (new_status, note[:500], ad_id))
             if admin_id is not None:
                 conn.execute("INSERT OR IGNORE INTO users(user_id) VALUES(?)", (admin_id,))
@@ -325,6 +328,10 @@ class Marketplace:
 
     def reopen(self, ad_id: int, owner_id: int) -> None:
         with self.db.transaction() as conn:
+            row = conn.execute("SELECT publication_chat_id,publication_message_id FROM ads WHERE ad_id=? AND owner_id=?", (ad_id, owner_id)).fetchone()
+            if row and (row["publication_chat_id"] or row["publication_message_id"] or
+                        conn.execute("SELECT 1 FROM ad_publication_messages WHERE ad_id=?", (ad_id,)).fetchone()):
+                raise MarketplaceError("برای اصلاح آگهی نشرشده و همگام‌سازی گروه از مینی‌اپ استفاده کنید.")
             cursor = conn.execute("UPDATE ads SET status='draft', updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE ad_id=? AND owner_id=? AND status IN ('rejected','expired','archived')", (ad_id, owner_id))
             if cursor.rowcount != 1:
                 raise MarketplaceError("این آگهی را نمی‌توان دوباره ویرایش کرد.")

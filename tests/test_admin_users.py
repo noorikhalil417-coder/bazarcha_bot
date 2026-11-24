@@ -1,3 +1,4 @@
+import asyncio
 import unittest
 from dataclasses import replace
 from types import SimpleNamespace
@@ -82,3 +83,22 @@ class AdminUsersTests(unittest.IsolatedAsyncioTestCase):
         await unban_user(update, context)
         self.bot.unban_chat_member.assert_not_awaited()
         message.reply_text.assert_awaited_once()
+
+    async def test_legacy_unban_waits_for_inflight_web_block(self):
+        started, release = asyncio.Event(), asyncio.Event()
+        async def ban(*args):
+            started.set()
+            await release.wait()
+        self.bot.ban_chat_member.side_effect = ban
+        message = SimpleNamespace(reply_text=AsyncMock(), reply_to_message=None)
+        update = SimpleNamespace(effective_user=SimpleNamespace(id=41), effective_message=message)
+        context = SimpleNamespace(application=self.application, args=["100"], bot=self.bot)
+        blocking = asyncio.create_task(self.block(100))
+        await asyncio.wait_for(started.wait(), 2)
+        unblocking = asyncio.create_task(unban_user(update, context))
+        await asyncio.sleep(.05)
+        self.assertFalse(unblocking.done())
+        release.set()
+        self.assertEqual((await blocking).status, 200)
+        await unblocking
+        self.bot.unban_chat_member.assert_not_awaited()

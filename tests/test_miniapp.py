@@ -10,6 +10,7 @@ import unittest
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
+from unittest.mock import patch
 from urllib.parse import urlencode
 
 from aiohttp.test_utils import TestClient, TestServer
@@ -80,6 +81,34 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.status,403)
         self.assertEqual((await self.client.get('/')).status,200)
         self.assertEqual((await self.client.get('/../config.py')).status,404)
+
+    async def test_pre_authentication_limit_ignores_spoofed_forwarded_for(self):
+        with patch('services.miniapp.PREAUTH_REQUESTS_PER_MINUTE', 3):
+            for index in range(3):
+                response = await self.client.get('/api/state', headers={'X-Forwarded-For': f'192.0.2.{index}'})
+                self.assertEqual(response.status, 401)
+            response = await self.client.get('/api/state', headers={**self.headers(), 'X-Forwarded-For': '203.0.113.1'})
+            self.assertEqual(response.status, 429)
+
+    async def test_sensitive_admin_routes_reject_ordinary_users_before_handling_input(self):
+        routes = (
+            ('get', '/api/admin/summary'), ('get', '/api/admin/banners'),
+            ('get', '/api/admin/users'), ('get', '/api/admin/ads'),
+            ('get', '/api/admin/ads/1/photo/0'), ('get', '/api/admin/reports'),
+            ('get', '/api/admin/history'), ('get', '/api/admin/reference/categories'),
+            ('get', '/api/admin/reference/provinces'), ('get', '/api/admin/settings'),
+            ('post', '/api/admin/banners'), ('post', '/api/admin/users/100/block'),
+            ('post', '/api/admin/ads/1/action'), ('post', '/api/admin/ads/1/featured'),
+            ('post', '/api/admin/reports/1'), ('post', '/api/admin/reference/categories'),
+            ('post', '/api/admin/settings'),
+        )
+        for method, path in routes:
+            with self.subTest(path=path, method=method):
+                request = getattr(self.client, method)
+                kwargs = {'headers': self.headers()}
+                if method == 'post':
+                    kwargs['json'] = {}
+                self.assertEqual((await request(path, **kwargs)).status, 403)
 
     async def test_approved_logo_is_served(self):
         response = await self.client.get('/approved-logo.png')

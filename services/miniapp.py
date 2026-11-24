@@ -20,10 +20,13 @@ from aiohttp import web
 from PIL import Image, ImageOps, UnidentifiedImageError
 
 from services.marketplace import MarketplaceError, parse_price_input, validate_ad
+from services.action_locks import action_lock
+from services.telegram_media import download_telegram_photo
 
 logger = logging.getLogger(__name__)
 WEB_ROOT = Path(__file__).resolve().parents[1] / "web"
 Image.MAX_IMAGE_PIXELS = 16_000_000
+PREAUTH_REQUESTS_PER_MINUTE = 3000
 
 
 def validate_init_data(raw: str, token: str, now: int | None = None) -> dict:
@@ -101,13 +104,24 @@ def normalize_photo(encoded: str) -> bytes:
 def create_web_app(application) -> web.Application:
     market = application.bot_data["marketplace"]
     config = application.bot_data["config"]
-    lock = asyncio.Lock()
+    lock = action_lock(application, "market")
     rates: OrderedDict = OrderedDict()
+    peer_rates: OrderedDict = OrderedDict()
 
     @web.middleware
     async def security(request, handler):
         try:
             if request.path.startswith("/api/"):
+                now = time.monotonic()
+                peer = request.remote or "unknown"
+                count, started = peer_rates.pop(peer, (0, now))
+                if now - started >= 60:
+                    count, started = 0, now
+                peer_rates[peer] = (count + 1, started)
+                if len(peer_rates) > 5000:
+                    peer_rates.popitem(last=False)
+                if count >= PREAUTH_REQUESTS_PER_MINUTE:
+                    return web.json_response({"error": "درخواست‌های زیادی ارسال شده است؛ کمی صبر کنید."}, status=429)
                 auth = request.headers.get("Authorization", "")
                 try:
                     user = validate_init_data(auth.removeprefix("tma ") if auth.startswith("tma ") else "", config.token)
@@ -300,8 +314,13 @@ def create_web_app(application) -> web.Application:
         return web.json_response({"ok": True})
 
     from services.marketplace_web import register_marketplace_routes
-    market_action_lock = asyncio.Lock()
-    register_marketplace_routes(app, application, market_action_lock)
+    media_downloads = asyncio.Semaphore(4)
+
+    async def download_photo(file_id):
+        async with media_downloads:
+            return await download_telegram_photo(application.bot, file_id)
+
+    register_marketplace_routes(app, application, lock, download_photo)
     from services.banners import register_banner_routes
     register_banner_routes(app, application, normalize_photo)
     from services.admin_users import register_user_routes
@@ -309,7 +328,7 @@ def create_web_app(application) -> web.Application:
     from services.admin_settings import register_admin_settings_routes
     register_admin_settings_routes(app, application)
     from services.admin_market import register_admin_market_routes
-    register_admin_market_routes(app, application, market_action_lock)
+    register_admin_market_routes(app, application, lock, download_photo)
     app.router.add_get("/api/admin/summary", admin_summary)
     app.router.add_get("/health", health)
     app.router.add_get("/api/state", state)

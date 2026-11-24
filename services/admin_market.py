@@ -13,7 +13,7 @@ from services.marketplace_web import sync_group
 logger = logging.getLogger(__name__)
 
 
-def register_admin_market_routes(app, application, lock):
+def register_admin_market_routes(app, application, lock, download_photo):
     market = application.bot_data["marketplace"]
     db = market.db
 
@@ -44,12 +44,7 @@ def register_admin_market_routes(app, application, lock):
         if row["data"] is not None:
             content = row["data"]
         else:
-            remote = await application.bot.get_file(row["file_id"])
-            if remote.file_size and remote.file_size > 10_000_000:
-                raise web.HTTPRequestEntityTooLarge(max_size=10_000_000, actual_size=remote.file_size)
-            content = bytes(await remote.download_as_bytearray())
-            if len(content) > 10_000_000:
-                raise web.HTTPRequestEntityTooLarge(max_size=10_000_000, actual_size=len(content))
+            content = await download_photo(row["file_id"])
         return web.Response(body=content, content_type="image/jpeg")
 
     async def sync_archived(ad):

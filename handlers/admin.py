@@ -22,6 +22,7 @@ from telegram.error import TelegramError
 from telegram.ext import CallbackQueryHandler, CommandHandler, ContextTypes
 
 from handlers.panel import render
+from services.action_locks import serialized
 from services.backup import create_backup, restore_backup
 from services.marketplace import Marketplace, MarketplaceError, format_public_ad
 
@@ -274,6 +275,7 @@ async def _dashboard_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
     await render(update, context, text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode="HTML")
 
 
+@serialized("market")
 async def _admin_action(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     if not _is_admin(context, query.from_user.id):
@@ -583,6 +585,7 @@ async def unmute_user(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         logger.warning("Unmute failed: %s", type(exc).__name__); await update.effective_message.reply_text("رفع محدودیت انجام نشد؛ دسترسی مدیر ربات را بررسی کنید.")
 
 
+@serialized("user_block")
 async def ban_user(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not _is_admin(context, update.effective_user.id): await update.effective_message.reply_text("این فرمان برای مدیران است."); return
     target = _target_args(update, context); group_id = context.application.bot_data["config"].group_id
@@ -595,6 +598,7 @@ async def ban_user(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         logger.warning("Ban failed: %s", type(exc).__name__); await update.effective_message.reply_text("بیرون‌کردن انجام نشد؛ دسترسی مدیر ربات را بررسی کنید.")
 
 
+@serialized("user_block")
 async def unban_user(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not _is_admin(context, update.effective_user.id): await update.effective_message.reply_text("این فرمان برای مدیران است."); return
     target = _target_args(update, context); group_id = context.application.bot_data["config"].group_id
@@ -769,6 +773,7 @@ async def moderation_history(update: Update, context: ContextTypes.DEFAULT_TYPE)
     await update.effective_message.reply_text(f"سابقهٔ کاربر {user_id}:\n{details}")
 
 
+@serialized("market")
 async def restore_ad(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not _is_admin(context, update.effective_user.id):
         await update.effective_message.reply_text("این فرمان برای مدیران است.")
@@ -783,6 +788,7 @@ async def restore_ad(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         await update.effective_message.reply_text(str(exc))
 
 
+@serialized("market")
 async def retry_publication(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not _is_admin(context, update.effective_user.id):
         await update.effective_message.reply_text("این فرمان برای مدیران است.")
@@ -799,6 +805,7 @@ async def retry_publication(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     await _publish_ad(context, ad_id, update.effective_user.id, manual_retry=True)
 
 
+@serialized("market")
 async def confirm_partial_publication(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not _is_admin(context, update.effective_user.id):
         await update.effective_message.reply_text("این فرمان برای مدیران است.")
@@ -814,6 +821,7 @@ async def confirm_partial_publication(update: Update, context: ContextTypes.DEFA
         await update.effective_message.reply_text(str(exc))
 
 
+@serialized("market")
 async def publish_approved(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not _is_admin(context, update.effective_user.id):
         await update.effective_message.reply_text("این فرمان برای مدیران است.")

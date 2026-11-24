@@ -1,6 +1,5 @@
 """Administrative blocking across the bot, Mini App and configured Telegram group."""
 
-import asyncio
 import logging
 import sqlite3
 
@@ -9,6 +8,7 @@ from telegram.error import TelegramError
 from telegram.ext import ApplicationHandlerStop
 
 from services.marketplace import MarketplaceError
+from services.action_locks import action_lock
 
 logger = logging.getLogger(__name__)
 
@@ -36,7 +36,7 @@ async def blocked_user_guard(update, context):
 def register_user_routes(app, application):
     db = application.bot_data["marketplace"].db
     config = application.bot_data["config"]
-    lock = asyncio.Lock()
+    lock = action_lock(application, "user_block")
 
     async def users(request):
         page = max(0, min(int(request.query.get("page", "0")), 10000))

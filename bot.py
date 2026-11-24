@@ -170,11 +170,13 @@ async def _handle_join_request(update: Update, context: ContextTypes.DEFAULT_TYP
 
 
 async def _scheduled_tasks(context: ContextTypes.DEFAULT_TYPE) -> None:
+    from services.action_locks import action_lock
     market: Marketplace = context.application.bot_data["marketplace"]
     database: Database = context.application.bot_data["database"]
     config: Config = context.application.bot_data["config"]
     try:
-        expired = await asyncio.to_thread(market.expire_ads)
+        async with action_lock(context.application, "market"):
+            expired = await asyncio.to_thread(market.expire_ads)
         if expired:
             logger.info("Expired advertisements: %s", expired)
         rows = await asyncio.to_thread(market.due_expiry_notifications)
