@@ -89,7 +89,7 @@ def format_public_ad(ad: dict[str, Any] | sqlite3.Row) -> str:
         f"📍 موقعیت: {ad['city']}\n"
         f"📞 راه تماس: {ad['contact']}\n"
         f"🔖 شناسهٔ آگهی: #{ad['ad_id']}\n"
-        "🏷️ بازارچه"
+        "🏷️ دوکانچه"
     )
 
 

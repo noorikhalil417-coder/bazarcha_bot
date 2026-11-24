@@ -264,14 +264,14 @@ def create_web_app(application) -> web.Application:
         context = SimpleNamespace(application=application, bot=application.bot)
         await notify_ad_reviewers(context, ad_id)
         try:
-            await application.bot.send_message(owner_id, f"✅ آگهی <b>#{ad_id}</b> برای بررسی مدیر فرستاده شد.\nپس از تأیید در بازارچه نشر می‌شود.", parse_mode="HTML")
+            await application.bot.send_message(owner_id, f"✅ آگهی <b>#{ad_id}</b> برای بررسی مدیر فرستاده شد.\nپس از تأیید در دوکانچه نشر می‌شود.", parse_mode="HTML")
         except Exception as exc:
             logger.info("Mini App confirmation unavailable: %s", type(exc).__name__)
         return web.json_response({"ad_id": ad_id, "status": "pending"})
 
     async def static(request):
         name = request.match_info.get("name", "index.html")
-        if name not in {"index.html", "app.js", "style.css", "vazirmatn.woff2", "FONT-LICENSE.txt", "logo.svg"}:
+        if name not in {"index.html", "app.js", "style.css", "vazirmatn.woff2", "FONT-LICENSE.txt", "logo.svg", "approved-logo.png"}:
             raise web.HTTPNotFound()
         return web.FileResponse(WEB_ROOT / name)
 

@@ -70,6 +70,12 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((await self.client.get('/')).status,200)
         self.assertEqual((await self.client.get('/../config.py')).status,404)
 
+    async def test_approved_logo_is_served(self):
+        response = await self.client.get('/approved-logo.png')
+        self.assertEqual(response.status, 200)
+        self.assertEqual(response.content_type, 'image/png')
+        self.assertEqual((await response.read())[:8], b'\x89PNG\r\n\x1a\n')
+
     async def test_atomic_draft_owner_revision_and_idempotent_submit(self):
         response=await self.put();self.assertEqual(response.status,200);draft=await response.json()
         self.assertEqual(draft['price'],'2000')

@@ -94,7 +94,7 @@ class Config:
             automatic_backup_interval_hours=_integer("AUTOMATIC_BACKUP_INTERVAL_HOURS", values.get("AUTOMATIC_BACKUP_INTERVAL_HOURS"), 24, minimum=0),
             backup_retention_days=_integer("BACKUP_RETENTION_DAYS", values.get("BACKUP_RETENTION_DAYS"), 14),
             cleanup_retention_days=_integer("CLEANUP_RETENTION_DAYS", values.get("CLEANUP_RETENTION_DAYS"), 30),
-            welcome_message=values.get("WELCOME_MESSAGE", "به بازارچه خوش آمدید! برای ثبت یا جست‌وجوی آگهی از منوی ربات استفاده کنید."),
+            welcome_message=values.get("WELCOME_MESSAGE", "به دوکانچه خوش آمدید! برای ثبت یا جست‌وجوی آگهی از منوی ربات استفاده کنید."),
             group_rules=values.get("GROUP_RULES", DEFAULT_RULES),
             mini_app_url=mini_app_url,
             web_port=web_port,

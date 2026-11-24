@@ -131,7 +131,7 @@ class PrivatePanelTests(unittest.IsolatedAsyncioTestCase):
         await reject_stale_panel_callback(notification, self.context)
         await render(notification, self.context, "بررسی شد")
         self.assertEqual(self.bot.messages[41, 99][0], "بررسی شد")
-        self.assertIn("بازارچه خوش آمدید", self.bot.messages[41, 1][0])
+        self.assertIn("دوکانچه خوش آمدید", self.bot.messages[41, 1][0])
         self.assertEqual(self.bot.next_id, 2)
 
     async def test_rapid_callbacks_are_serialized_and_stale_toggle_is_ignored(self):

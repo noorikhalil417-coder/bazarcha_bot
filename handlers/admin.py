@@ -53,7 +53,7 @@ async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     if not user or not _is_admin(context, user.id):
         await render(update, context, "شما اجازهٔ دسترسی به پنل مدیر را ندارید.")
         return
-    await render(update, context, "پنل مدیریت بازارچه:", reply_markup=_dashboard())
+    await render(update, context, "پنل مدیریت دوکانچه:", reply_markup=_dashboard())
 
 
 def _dashboard() -> InlineKeyboardMarkup:
@@ -108,7 +108,7 @@ async def _dashboard_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
     await query.answer()
     section = query.data.partition(":")[2]
     if section == "home":
-        await render(update, context, "پنل مدیریت بازارچه:", reply_markup=_dashboard())
+        await render(update, context, "پنل مدیریت دوکانچه:", reply_markup=_dashboard())
         return
     known = dict(SECTIONS)
     if section not in known:
@@ -355,7 +355,7 @@ async def _publish_ad(context: ContextTypes.DEFAULT_TYPE, ad_id: int, admin_id: 
             message = await context.bot.send_message(config.publication_chat_id, "<b>" + html.escape(details.split("\n", 1)[0]) + "</b>\n" + html.escape(details.partition("\n")[2]), reply_markup=publication_buttons, parse_mode="HTML", link_preview_options=LinkPreviewOptions(is_disabled=True))
             market.finish_publication(ad_id, message.message_id, config.publication_chat_id)
         try:
-            await context.bot.send_message(ad["owner_id"], f"آگهی {ad_id} در بازارچه نشر شد.")
+            await context.bot.send_message(ad["owner_id"], f"آگهی {ad_id} در دوکانچه نشر شد.")
         except TelegramError as exc:
             logger.info("Publication completed but owner notification failed for ad %s: %s", ad_id, type(exc).__name__)
     except TelegramError as exc:
@@ -517,7 +517,7 @@ async def _backup_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     try:
         path = await asyncio.to_thread(create_backup, context.application.bot_data["database"], config.backup_directory)
         with path.open("rb") as backup_file:
-            await query.message.reply_document(backup_file, filename=path.name, caption="پشتیبان دیتابیس بازارچه؛ در محل امن نگهداری شود.")
+            await query.message.reply_document(backup_file, filename=path.name, caption="پشتیبان دیتابیس دوکانچه؛ در محل امن نگهداری شود.")
     except (OSError, ValueError, sqlite3.Error) as exc:
         logger.warning("Backup failed: %s", type(exc).__name__)
         await query.message.reply_text("ساخت پشتیبان انجام نشد. مدیر سیستم باید دسترسی پوشه را بررسی کند.")
@@ -687,7 +687,7 @@ async def backup_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     try:
         path = await asyncio.to_thread(create_backup, context.application.bot_data["database"], config.backup_directory)
         with path.open("rb") as backup_file:
-            await update.effective_message.reply_document(backup_file, filename=path.name, caption="پشتیبان امن دیتابیس بازارچه.")
+            await update.effective_message.reply_document(backup_file, filename=path.name, caption="پشتیبان امن دیتابیس دوکانچه.")
     except (OSError, ValueError, sqlite3.Error) as exc:
         logger.warning("Backup failed: %s", type(exc).__name__); await update.effective_message.reply_text("ساخت پشتیبان انجام نشد.")
 

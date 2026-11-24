@@ -49,11 +49,11 @@ def _ad_status_label(ad) -> str:
 
 
 def _main_menu(context=None, update=None) -> tuple[str, InlineKeyboardMarkup]:
-    text = "به بازارچه خوش آمدید! از گزینه‌های زیر انتخاب کنید:"
+    text = "به دوکانچه خوش آمدید! از گزینه‌های زیر انتخاب کنید:"
     buttons = [
         [InlineKeyboardButton("🔎 جست‌وجوی آگهی‌ها", callback_data="menu:search")],
         [InlineKeyboardButton("📂 دسته‌بندی آگهی‌ها", callback_data="menu:categories"),
-         InlineKeyboardButton("📋 قوانین بازارچه", callback_data="menu:rules")],
+         InlineKeyboardButton("📋 قوانین دوکانچه", callback_data="menu:rules")],
         [InlineKeyboardButton("📋 آگهی‌های من", callback_data="own:list:0")],
         [InlineKeyboardButton("💬 کمک و همکاری", callback_data="menu:help")],
         [InlineKeyboardButton("🎡 بازی چرخک", url=CHARKHAK_URL)],
@@ -61,7 +61,7 @@ def _main_menu(context=None, update=None) -> tuple[str, InlineKeyboardMarkup]:
     if context and update and getattr(getattr(update, "effective_chat", None), "type", None) == "private":
         url = context.application.bot_data["config"].mini_app_url
         if url:
-            buttons.insert(0, [InlineKeyboardButton("✨ بازارچه | ثبت آسان آگهی", web_app=WebAppInfo(url))])
+            buttons.insert(0, [InlineKeyboardButton("✨ دوکانچه | ثبت آسان آگهی", web_app=WebAppInfo(url))])
     return text, InlineKeyboardMarkup(buttons)
 
 
@@ -116,7 +116,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 async def rules(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     text = effective_rules(context)
     await render(update, context,
-        "📋 مقررات بازارچه:\n" + text,
+        "📋 مقررات دوکانچه:\n" + text,
         reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🏠 منوی اصلی", callback_data="menu:home")]]),
     )
 
@@ -143,7 +143,7 @@ async def _begin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         bot = await context.bot.get_me()
         await render(update, context,
             "برای ثبت آگهی، مینی‌اپ را در چت خصوصی باز کن.",
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🛍 ورود به بازارچه", url=f"https://t.me/{bot.username}?start=menu")]]),
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🛍 ورود به دوکانچه", url=f"https://t.me/{bot.username}?start=menu")]]),
         )
         return ConversationHandler.END
     _touch(update, context)
@@ -709,7 +709,7 @@ async def navigation(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     elif query.data == "menu:rules":
         text = effective_rules(context)
         await render(update, context,
-            "📋 مقررات بازارچه:\n" + text,
+            "📋 مقررات دوکانچه:\n" + text,
             reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🏠 منوی اصلی", callback_data="menu:home")]]),
         )
     elif query.data == "menu:help":
