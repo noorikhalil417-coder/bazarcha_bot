@@ -72,7 +72,8 @@ $('charkhak').onclick=()=>{const url='https://t.me/CHARKHAK1_BOT';if(tg?.openTel
  function chooseCategory(id){$('browse-form').reset();$('browse-category').value=String(id);openBrowse(false);}
  function renderCategories(){const grid=$('v2-categories');grid.replaceChildren();for(const cat of state.categories){const b=document.createElement('button');b.className='v2-category';b.type='button';b.append(icon(catIcon(cat.name)),document.createTextNode(cat.name));b.onclick=()=>chooseCategory(cat.category_id);grid.append(b);}}
  // renderState is also called after refreshing actual server categories.
- const oldRenderState=renderState;renderState=function(){oldRenderState();renderCategories();};renderCategories();
+ function renderProvinces(){const list=$('city-options');list.querySelectorAll('[data-province]').forEach(option=>option.remove());const existing=new Set([...list.options].map(option=>option.value));for(const name of state.provinces||[]){if(!existing.has(name)){const option=new Option(name,name);option.dataset.province='1';list.append(option);}}}
+ const oldRenderState=renderState;renderState=function(){oldRenderState();renderCategories();renderProvinces();};renderCategories();renderProvinces();
  function cleanBrowse(){ $('browse-form').reset();openBrowse(false); }
  $('nav-browse').onclick=cleanBrowse;$('all-listings').onclick=cleanBrowse;
  $('nav-favorites').onclick=()=>openBrowse(true);$('nav-create').onclick=()=>start('sale');$('nav-activity').onclick=activity;

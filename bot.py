@@ -17,6 +17,7 @@ from telegram.ext import (
     ChatMemberHandler,
     ContextTypes,
     MessageHandler,
+    TypeHandler,
     filters,
 )
 
@@ -243,6 +244,8 @@ def build_application(config: Config, database: Database | None = None) -> Appli
     application.bot_data["group_policy"] = GroupPolicy(db)
     application.bot_data["publish_ad"] = _publish_ad
     application.bot_data["notify_group_review"] = _notify_group_review
+    from services.admin_users import blocked_user_guard
+    application.add_handler(TypeHandler(Update, blocked_user_guard), group=-4)
     application.add_handler(CallbackQueryHandler(reject_stale_panel_callback), group=-3)
     from handlers.group_gate import install_prehandlers, handlers as group_handlers
     install_prehandlers(application)

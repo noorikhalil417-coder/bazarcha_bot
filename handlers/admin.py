@@ -599,6 +599,11 @@ async def unban_user(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     if not _is_admin(context, update.effective_user.id): await update.effective_message.reply_text("این فرمان برای مدیران است."); return
     target = _target_args(update, context); group_id = context.application.bot_data["config"].group_id
     if not target or not group_id: await update.effective_message.reply_text("کاربرد: /unban شناسه_کاربر (و تنظیم GROUP_ID)"); return
+    with context.application.bot_data["database"].connect() as conn:
+        blocked = conn.execute("SELECT 1 FROM blocked_users WHERE user_id=?", (target,)).fetchone()
+    if blocked:
+        await update.effective_message.reply_text("این حساب در پنل وب مسدود است؛ برای رفع مسدودی همهٔ بخش‌ها از پنل وب استفاده کنید.")
+        return
     try:
         await context.bot.unban_chat_member(group_id, target, only_if_banned=True)
         context.application.bot_data["moderation"].record_action(target, update.effective_user.id, "unban")

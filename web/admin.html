@@ -27,6 +27,9 @@
     <p id="error" class="notice error" role="alert" hidden></p>
     <p id="loading" class="notice" role="status">در حال دریافت آمار…</p>
     <section id="dashboard" hidden aria-label="آمار دوکانچه">
+      <nav class="admin-nav" aria-label="بخش‌های مدیریت">
+        <a href="#banners-title">بنرها</a><a href="#users-title">کاربران</a><a href="#ads-title">آگهی‌ها</a><a href="#reports-title">گزارش‌ها</a><a href="#reference-title">دسته و ولایت</a><a href="#settings-title">تنظیمات</a><a href="#history-title">سوابق</a>
+      </nav>
       <div class="section-title"><h2>آمار کلی</h2><span>داده‌های واقعی</span></div>
       <div class="cards">
         <article class="card"><span class="card-icon" aria-hidden="true">◉</span><div><h3>کاربران</h3><strong id="users"></strong><p>کاربران ثبت‌شده</p></div></article>
@@ -41,8 +44,66 @@
       </div>
       <div class="information">
         <h2>مدیریت دوکانچه</h2>
-        <p>امکانات مدیریت فعلی همچنان در پنل مدیر ربات در دسترس‌اند. امکانات مدیریتی وب در حال توسعه‌اند.</p>
+        <p>امکانات مدیریت ربات همچنان در دسترس‌اند. تغییرات این پنل در سوابق مدیران ثبت می‌شوند.</p>
       </div>
+      <section class="information" aria-labelledby="banners-title">
+        <h2 id="banners-title">مدیریت بنرهای تبلیغاتی</h2>
+        <p>حداکثر هفت بنر فعال در هر جایگاه. زمان‌ها بر اساس ساعت دستگاه شما هستند.</p>
+        <p id="banner-error" class="error-text" role="alert" hidden></p>
+        <p id="banner-form-mode" role="status">افزودن بنر جدید</p>
+        <form id="banner-form" class="banner-form">
+          <input id="banner-id" type="hidden">
+          <label>عنوان<input id="banner-title" maxlength="120" required></label>
+          <label>جایگاه<select id="banner-placement"><option value="home">خانه</option><option value="browse">جست‌وجو</option></select></label>
+          <label>پیوند اختیاری HTTPS<input id="banner-url" type="url" maxlength="2048" placeholder="https://"></label>
+          <label>تصویر JPG، PNG یا WEBP<input id="banner-image" type="file" accept="image/jpeg,image/png,image/webp"></label>
+          <label>شروع اختیاری<input id="banner-start" type="datetime-local"></label>
+          <label>پایان اختیاری<input id="banner-end" type="datetime-local"></label>
+          <label class="banner-check"><input id="banner-enabled" type="checkbox"> فعال</label>
+          <div class="banner-actions"><button type="submit" class="primary-button">ذخیرهٔ بنر</button><button type="button" id="banner-clear">فرم تازه</button></div>
+        </form>
+        <div id="banner-list" aria-live="polite"></div>
+      </section>
+      <section class="information" aria-labelledby="users-title">
+        <h2 id="users-title">مدیریت کاربران</h2>
+        <p>مسدودسازی شامل ربات، مینی‌اپ و گروه تنظیم‌شده است.</p>
+        <p id="users-error" class="error-text" role="alert" hidden></p>
+        <div id="users-list" aria-live="polite"></div>
+        <div class="banner-actions"><button type="button" id="users-prev">صفحهٔ قبل</button><button type="button" id="users-next">صفحهٔ بعد</button></div>
+      </section>
+      <section class="information" aria-labelledby="ads-title">
+        <h2 id="ads-title">آگهی‌ها و آگهی‌های ویژه</h2>
+        <p>بازیابی آگهی بایگانی‌شده آن را به پیش‌نویس بازمی‌گرداند تا دوباره بررسی شود.</p>
+        <p id="ads-error" class="error-text" role="alert" hidden></p>
+        <p id="ads-notice" role="status" hidden></p>
+        <div id="ads-admin-list"></div>
+        <div class="banner-actions"><button type="button" id="ads-prev">صفحهٔ قبل</button><button type="button" id="ads-next">صفحهٔ بعد</button></div>
+      </section>
+      <section class="information" aria-labelledby="reports-title">
+        <h2 id="reports-title">گزارش تخلفات</h2>
+        <p id="reports-error" class="error-text" role="alert" hidden></p>
+        <div id="reports-list"></div>
+        <div class="banner-actions"><button type="button" id="reports-prev">صفحهٔ قبل</button><button type="button" id="reports-next">صفحهٔ بعد</button></div>
+      </section>
+      <section class="information" aria-labelledby="reference-title">
+        <h2 id="reference-title">دسته‌بندی‌ها و ولایت‌ها</h2>
+        <p>ولایت‌ها پیشنهادهای ورودی‌اند؛ موقعیت آگهی‌های قبلی تغییر نمی‌کند.</p>
+        <p id="reference-error" class="error-text" role="alert" hidden></p>
+        <details><summary>دسته‌بندی‌ها</summary><form id="category-form" class="banner-actions"><input id="category-name" maxlength="80" required placeholder="نام دستهٔ تازه"><button type="submit">افزودن</button></form><div id="categories-list"></div></details>
+        <details><summary>ولایت‌ها</summary><form id="province-form" class="banner-actions"><input id="province-name" maxlength="80" required placeholder="نام ولایت تازه"><button type="submit">افزودن</button></form><div id="provinces-list"></div></details>
+      </section>
+      <section class="information" aria-labelledby="settings-title">
+        <h2 id="settings-title">تنظیمات ربات و گروه</h2>
+        <p>شناسهٔ گروه، مقصد نشر و اطلاعات محرمانه فقط از تنظیمات محیط سرور تغییر می‌کنند.</p>
+        <p id="settings-error" class="error-text" role="alert" hidden></p>
+        <div id="settings-list"></div>
+      </section>
+      <section class="information" aria-labelledby="history-title">
+        <h2 id="history-title">سوابق اقدامات مدیران</h2>
+        <p id="history-error" class="error-text" role="alert" hidden></p>
+        <div id="history-list"></div>
+        <div class="banner-actions"><button type="button" id="history-prev">صفحهٔ قبل</button><button type="button" id="history-next">صفحهٔ بعد</button></div>
+      </section>
     </section>
     <footer>دوکانچه · پنل مدیریت</footer>
   </main>

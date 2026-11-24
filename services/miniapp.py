@@ -130,6 +130,11 @@ def create_web_app(application) -> web.Application:
                     rates.popitem(last=False)
                 if count >= 90:
                     return web.json_response({"error": "کمی صبر کنید و دوباره تلاش کنید."}, status=429)
+                if user["id"] not in config.admin_ids:
+                    with market.db.connect() as conn:
+                        blocked = conn.execute("SELECT 1 FROM blocked_users WHERE user_id=?", (user["id"],)).fetchone()
+                    if blocked:
+                        return web.json_response({"error": "دسترسی این حساب مسدود شده است."}, status=403)
                 if request.path.startswith("/api/admin/") and user["id"] not in config.admin_ids:
                     return web.json_response({"error": "دسترسی مدیر لازم است."}, status=403)
             response = await handler(request)
@@ -159,7 +164,9 @@ def create_web_app(application) -> web.Application:
 
     async def state(request):
         user = request["user"]
-        return web.json_response({"user": {"name": user.get("first_name", "دوست عزیز"), "username": user.get("username", "")}, "categories": [dict(row) for row in market.categories()], "draft": draft_payload(market.draft_for_user(user["id"])), "ads": application.bot_data["miniapp_cards"](user["id"]), "profile": application.bot_data["miniapp_profile"](user["id"]), "rules": market.get_setting("rules", config.group_rules)})
+        with market.db.connect() as conn:
+            provinces = [row[0] for row in conn.execute("SELECT name FROM provinces WHERE enabled=1 ORDER BY sort_order,province_id")]
+        return web.json_response({"user": {"name": user.get("first_name", "دوست عزیز"), "username": user.get("username", "")}, "categories": [dict(row) for row in market.categories()], "provinces": provinces, "draft": draft_payload(market.draft_for_user(user["id"])), "ads": application.bot_data["miniapp_cards"](user["id"]), "profile": application.bot_data["miniapp_profile"](user["id"]), "rules": market.get_setting("rules", config.group_rules)})
 
     async def extract(request):
         body = await request.json()
@@ -273,7 +280,7 @@ def create_web_app(application) -> web.Application:
 
     async def static(request):
         name = request.match_info.get("name", "index.html")
-        if name not in {"index.html", "app.js", "style.css", "vazirmatn.woff2", "FONT-LICENSE.txt", "logo.svg", "approved-logo.png", "admin.html", "admin.js", "admin.css"}:
+        if name not in {"index.html", "app.js", "banners.js", "style.css", "vazirmatn.woff2", "FONT-LICENSE.txt", "logo.svg", "approved-logo.png", "admin.html", "admin.js", "admin.css"}:
             raise web.HTTPNotFound()
         return web.FileResponse(WEB_ROOT / name)
 
@@ -294,6 +301,14 @@ def create_web_app(application) -> web.Application:
 
     from services.marketplace_web import register_marketplace_routes
     register_marketplace_routes(app, application)
+    from services.banners import register_banner_routes
+    register_banner_routes(app, application, normalize_photo)
+    from services.admin_users import register_user_routes
+    register_user_routes(app, application)
+    from services.admin_settings import register_admin_settings_routes
+    register_admin_settings_routes(app, application)
+    from services.admin_market import register_admin_market_routes
+    register_admin_market_routes(app, application)
     app.router.add_get("/api/admin/summary", admin_summary)
     app.router.add_get("/health", health)
     app.router.add_get("/api/state", state)

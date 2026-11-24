@@ -8,10 +8,17 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
 
-SCHEMA_VERSION = 8
+SCHEMA_VERSION = 12
 DEFAULT_CATEGORIES = (
     "موبایل و تکنالوژی", "موتر و وسایط", "خانه و جایداد", "لباس و لوازم شخصی",
     "لوازم خانه", "خدمات", "کار و استخدام", "حیوانات و محصولات زراعتی", "سایر موارد",
+)
+AFGHAN_PROVINCES = (
+    "ارزگان", "بادغیس", "بامیان", "بدخشان", "بغلان", "بلخ", "پروان", "پکتیا",
+    "پکتیکا", "پنجشیر", "تخار", "جوزجان", "دایکندی", "زابل", "سرپل", "سمنگان",
+    "غزنی", "غور", "فاریاب", "فراه", "کابل", "کاپیسا", "کندز", "کندهار",
+    "کنر", "خوست", "لغمان", "لوگر", "میدان وردک", "ننگرهار", "نورستان",
+    "نیمروز", "هرات", "هلمند",
 )
 
 
@@ -128,6 +135,57 @@ class Database:
                     )
                     connection.execute("INSERT OR IGNORE INTO marketplace_metrics(id) VALUES(1)")
                     connection.execute("PRAGMA user_version = 8")
+                    connection.commit()
+                    version = 8
+                if version < 9:
+                    connection.execute("BEGIN IMMEDIATE")
+                    connection.execute(
+                        "CREATE TABLE IF NOT EXISTS banners ("
+                        "banner_id INTEGER PRIMARY KEY AUTOINCREMENT, "
+                        "placement TEXT NOT NULL CHECK(placement IN ('home','browse')), "
+                        "title TEXT NOT NULL, url TEXT NOT NULL DEFAULT '', "
+                        "image BLOB NOT NULL CHECK(length(image)<=2097152), "
+                        "starts_at INTEGER, ends_at INTEGER, "
+                        "enabled INTEGER NOT NULL DEFAULT 0 CHECK(enabled IN (0,1)), "
+                        "sort_order INTEGER NOT NULL DEFAULT 0, "
+                        "CHECK(starts_at IS NULL OR ends_at IS NULL OR starts_at<ends_at))"
+                    )
+                    connection.execute("PRAGMA user_version = 9")
+                    connection.commit()
+                    version = 9
+                if version < 10:
+                    connection.execute("BEGIN IMMEDIATE")
+                    connection.execute(
+                        "CREATE TABLE IF NOT EXISTS blocked_users ("
+                        "user_id INTEGER PRIMARY KEY REFERENCES users(user_id), "
+                        "admin_id INTEGER NOT NULL, reason TEXT NOT NULL, "
+                        "group_synced INTEGER NOT NULL DEFAULT 0 CHECK(group_synced IN (0,1)), "
+                        "created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')))"
+                    )
+                    connection.execute("PRAGMA user_version = 10")
+                    connection.commit()
+                    version = 10
+                if version < 11:
+                    connection.execute("BEGIN IMMEDIATE")
+                    connection.execute(
+                        "CREATE TABLE IF NOT EXISTS provinces ("
+                        "province_id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL UNIQUE, "
+                        "enabled INTEGER NOT NULL DEFAULT 1 CHECK(enabled IN (0,1)), sort_order INTEGER NOT NULL DEFAULT 0)"
+                    )
+                    connection.executemany("INSERT OR IGNORE INTO provinces(name,sort_order) VALUES(?,?)",
+                                           [(name, index) for index, name in enumerate(AFGHAN_PROVINCES)])
+                    connection.execute("PRAGMA user_version = 11")
+                    connection.commit()
+                    version = 11
+                if version < 12:
+                    connection.execute("BEGIN IMMEDIATE")
+                    connection.execute(
+                        "CREATE TABLE IF NOT EXISTS ad_publication_history ("
+                        "ad_id INTEGER NOT NULL REFERENCES ads(ad_id), chat_id INTEGER NOT NULL, "
+                        "message_id INTEGER NOT NULL, archived_at TEXT NOT NULL DEFAULT "
+                        "(strftime('%Y-%m-%dT%H:%M:%fZ','now')), PRIMARY KEY(ad_id,chat_id,message_id))"
+                    )
+                    connection.execute("PRAGMA user_version = 12")
                     connection.commit()
             finally:
                 connection.close()

@@ -5,11 +5,29 @@ import re
 from datetime import UTC, datetime
 
 from aiohttp import web
-from telegram.error import TelegramError
+from telegram.error import BadRequest, TelegramError
 
 from services.marketplace import MarketplaceError, format_price
 
 logger = logging.getLogger(__name__)
+
+
+async def sync_group(application, ad, action, messages, photo_count):
+    ids=[(m['chat_id'],m['message_id']) for m in messages]
+    if not ids and ad['publication_chat_id'] and ad['publication_message_id']:ids=[(ad['publication_chat_id'],ad['publication_message_id'])]
+    message={'sold':'✅ این آگهی فروخته شد.','archived':'این آگهی از دسترس خارج شد.','edit':'این آگهی برای اصلاح از دسترس خارج شد.'}[action]
+    synced=True
+    for chat_id,message_id in ids:
+        try:
+            if photo_count and (len(ids)==1 or (chat_id,message_id)!=ids[-1]):
+                await application.bot.edit_message_caption(chat_id=chat_id,message_id=message_id,caption=message,reply_markup=None)
+            else:await application.bot.edit_message_text(chat_id=chat_id,message_id=message_id,text=message,reply_markup=None)
+        except BadRequest as exc:
+            if not str(exc).casefold().startswith("message is not modified"):
+                synced=False;logger.info('Group status sync unavailable: %s',type(exc).__name__)
+        except TelegramError as exc:
+            synced=False;logger.info('Group status sync unavailable: %s',type(exc).__name__)
+    return synced
 
 
 def register_marketplace_routes(app, application):
@@ -130,20 +148,6 @@ def register_marketplace_routes(app, application):
             conn.execute('UPDATE miniapp_profiles SET notifications_read_at=max(notifications_read_at,?) WHERE user_id=?',(until,uid))
         return web.json_response({'ok':True})
 
-    async def update_group(ad,action,messages,photo_count):
-        ids=[(m['chat_id'],m['message_id']) for m in messages]
-        if not ids and ad['publication_chat_id'] and ad['publication_message_id']:ids=[(ad['publication_chat_id'],ad['publication_message_id'])]
-        message={'sold':'✅ این آگهی فروخته شد.','archived':'این آگهی از دسترس خارج شد.','edit':'این آگهی برای اصلاح از دسترس خارج شد.'}[action]
-        synced=True
-        for chat_id,message_id in ids:
-            try:
-                if photo_count and (len(ids)==1 or (chat_id,message_id)!=ids[-1]):
-                    await application.bot.edit_message_caption(chat_id=chat_id,message_id=message_id,caption=message,reply_markup=None)
-                else:await application.bot.edit_message_text(chat_id=chat_id,message_id=message_id,text=message,reply_markup=None)
-            except TelegramError as exc:
-                synced=False;logger.info('Group status sync unavailable: %s',type(exc).__name__)
-        return synced
-
     async def owner_action(request):
         body=await request.json();uid=request['user']['id'];ad_id=int(body['ad_id']);action=body['action']
         async with lock:
@@ -161,7 +165,7 @@ def register_marketplace_routes(app, application):
                     conn.execute('DELETE FROM ad_publication_messages WHERE ad_id=?',(ad_id,))
             elif action in {'sold','archived'}:market.owner_action(ad_id,uid,action)
             else:raise MarketplaceError('این کار مجاز نیست.')
-        synced=await update_group(previous,action,messages,photo_count) if previous['status']=='published' else True
+        synced=await sync_group(application,previous,action,messages,photo_count) if previous['status']=='published' else True
         return web.json_response({'ok':True,'group_synced':synced})
 
     async def report(request):
